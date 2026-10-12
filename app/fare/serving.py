@@ -221,7 +221,7 @@ def served() -> Served | None:
     """Return the model for ``FARE_ARTIFACTS_DIR``, loading it on first use.
 
     Returns:
-        The loaded model, or None when no trained model is there.
+        The loaded model, or None when no trained model is there or it cannot be loaded.
 
     """
     directory: Path = Path(settings.FARE_ARTIFACTS_DIR)
@@ -238,7 +238,7 @@ def served() -> Served | None:
             torch.set_num_threads(1)
             try:
                 loaded = load(directory)
-            except ValueError, RuntimeError, OSError:  # a mismatched pair, a corrupt file, a missing one
+            except Exception:  # a mismatched pair, a corrupt or foreign file, a missing one: all mean no model
                 logger.exception("refusing the artifacts in %s", directory)
                 return None
             _served[directory] = loaded
@@ -280,7 +280,7 @@ def predict(model: Served, pickup_zone: int, dropoff_zone: int, pickup_time: dat
     categories: torch.Tensor = torch.tensor([[features[name] for name in categorical]], dtype=torch.int64)
     numbers: torch.Tensor = torch.tensor([[features[name] for name in numeric]], dtype=torch.float32)
     with torch.inference_mode():
-        fare: float = float(torch.expm1(model.model(categories, numbers))[0])
+        fare: float = float(model.model.fares(model.model(categories, numbers))[0])
     finished: int = time.perf_counter_ns()
     if not math.isfinite(fare):
         raise ValueError("the model's prediction is not a finite number")

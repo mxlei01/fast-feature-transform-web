@@ -34,7 +34,7 @@ def artifacts(tmp_path_factory: pytest.TempPathFactory) -> Path:
     pq.write_table(table.slice(0, 2_400), root / "train.parquet")
     pq.write_table(table.slice(2_400), root / "valid.parquet")
     out: Path = root / "artifacts"
-    train_from_prepared(root / "train.parquet", root / "valid.parquet", root / "work", out, epochs=1, threads=1)
+    train_from_prepared(root / "train.parquet", root / "valid.parquet", root / "work", out, max_epochs=1, threads=1)
     with (out / "zones.csv").open("w", newline="", encoding="utf-8") as handle:
         writer = csv.writer(handle)
         writer.writerow(["LocationID", "Borough", "Zone", "service_zone"])

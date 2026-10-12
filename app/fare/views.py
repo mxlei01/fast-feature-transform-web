@@ -82,10 +82,11 @@ def _summary(stage: dict[str, Any], state: dict[str, Any]) -> list[str]:
         ]
     if kernel == "select":
         return ["keeps " + ", ".join(params["columns"])]
-    if kernel == "power_transform":
+    if kernel == "standard_scale":
         return [
-            f"{column}: Yeo-Johnson power {state['lambdas'][column]:.4f}, then standardized"
-            for column in state.get("lambdas", {})
+            f"{column}: minus the mean {state['means'][column]:.4f}, divided by the standard deviation "
+            f"{state['scales'][column]:.4f}"
+            for column in state.get("means", {})
         ]
     return [json.dumps(params, sort_keys=True)]
 
