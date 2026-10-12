@@ -65,8 +65,9 @@
   <h2>The model</h2>
   <dl class="facts">
     <div><dt>Trained on</dt><dd>{{ info.month|default:"synthetic trips" }}: {{ info.train_trips }} trips, validated on {{ info.valid_trips }} later ones</dd></div>
-    <div><dt>Validation error</dt><dd>${{ info.valid_mae|floatformat:2 }} mean absolute error, against ${{ info.baseline_valid_mae|floatformat:2 }} for a straight line from distance alone</dd></div>
-    <div><dt>Network</dt><dd>Embeddings for {{ info.config.categorical|join:", " }}; hidden layers {{ info.config.hidden|join:" and " }}</dd></div>
+    <div><dt>Validation error</dt><dd>${{ info.valid_metrics.mae|floatformat:2 }} mean absolute error, ${{ info.valid_metrics.rmse|floatformat:2 }} root mean squared error, R² {{ info.valid_metrics.r2|floatformat:3 }}</dd></div>
+    <div><dt>Baseline</dt><dd>${{ info.baseline_valid_metrics.mae|floatformat:2 }}, ${{ info.baseline_valid_metrics.rmse|floatformat:2 }} and R² {{ info.baseline_valid_metrics.r2|floatformat:3 }} for a straight line from distance alone</dd></div>
+    <div><dt>Network</dt><dd>Embeddings of width {{ info.config.embedding_dim }} for {{ info.config.categorical|join:", " }}; hidden layers of {{ info.config.hidden|join:", " }} units with batch normalization and dropout {{ info.config.dropout }}; kept from epoch {{ info.best_epoch }} of {{ info.history|length }}</dd></div>
     <div><dt>Libraries</dt><dd>fast-inference {{ info.fast_inference_version }}, torch {{ info.torch_version }}</dd></div>
   </dl>
 </section>

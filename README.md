@@ -9,8 +9,9 @@ fitted pipeline that wrote the training data transforms every request.
 | --- | --- |
 | Data | NYC TLC yellow taxi trips, August 2026: 2,105,008 of 3,336,716 trips kept |
 | Split | 1,643,095 trips from August 1–24 for training, 461,913 from August 25–31 for validation |
-| Validation error | **$1.72** mean absolute error, against $2.41 for a straight line from distance alone |
-| Request cost | about 10–20 µs in the pipeline and 200 µs in the network, on an M4 Mac mini |
+| Validation error | **$1.64** mean absolute error, $2.43 root mean squared error, R² 0.964 |
+| Baseline | $2.41, $3.29 and R² 0.935 for a straight line from distance alone |
+| Request cost | about 1.5 µs in the pipeline and 55 µs in the network while requests keep coming, and ten or more times that for a lone request after a pause, on an M4 Mac mini |
 
 ## How it works
 
@@ -28,14 +29,19 @@ fitted pipeline that wrote the training data transforms every request.
    | --- | --- | --- |
    | `categories` | `cast` | nothing: location IDs, hour and weekday become text |
    | `indices` | `label_encode` | an index per value seen at least 10 times; rare and unseen values share index 0 |
-   | `distance` | `power_transform` | a Yeo-Johnson power that makes distance roughly normal |
+   | `distance` | `standard_scale` | the mean and standard deviation of distance; a trip's distance becomes its number of standard deviations from the mean |
    | `features` | `select` | nothing: fixes the output columns and their order |
 
-4. Write both splits through the pipeline straight into memmaps, and train the network on them: an
-   embedding per categorical feature, joined with the distance, into a 128-64 MLP that predicts
-   `log1p` of the fare.
+4. Write both splits through the pipeline straight into memmaps, and train the network on them.
+   Each categorical feature gets an embedding of width 8, all kept in one shared table. The
+   embeddings and the distance go through hidden layers of 128, 64 and 32 units (each a linear
+   layer, batch normalization, ReLU and dropout 0.3) to the fare in dollars, whose starting value
+   is the average fare. Adam with learning rate 0.001 minimizes squared error on batches of 4,096
+   trips. Training stops once the validation loss has not improved for 15 epochs (at most 300)
+   and keeps the best epoch's weights; since the validation days choose that epoch, the validation
+   error is a little optimistic.
 5. Save everything serving needs in `artifacts/`: the pipeline, the weights, the configuration with
-   its metrics, and the zone names. The artifacts are small (about 150 KB) and committed.
+   its metrics, and the zone names. The artifacts are small (about 110 KB) and committed.
 
 **Serving** (`app/`): the model loads once per process, after checking that its pipeline and network
 come from the same training run. A request's trip is validated, turned into the same record, run
@@ -45,7 +51,28 @@ and `stages_state()`.
 
 What the model does not cover: the airport flat fares (JFK to Manhattan, Newark and the negotiated
 rates are left out of training), and zones with fewer than 10 trips in the training days, which share
-one estimate; the page and the API name such values in `unknown`.
+one estimate; the page and the API name such values in `unknown`. Distances far from the usual
+trips are extrapolated: trips under half a mile can price below the $3.00 meter drop, as low as
+$1.44 for 0.1 miles.
+
+**Choices measured.** The distance step and what the network predicts were chosen on the validation
+days, with the network and training above:
+
+| Distance step | Network predicts | Seed | Validation MAE | RMSE | R² |
+| --- | --- | --- | --- | --- | --- |
+| `standard_scale` | dollars | 0 | $1.64 | $2.43 | 0.964 |
+| `standard_scale` | dollars | 1 | $1.64 | $2.43 | 0.964 |
+| `power_transform` | dollars | 0 | $1.63 | $2.43 | 0.965 |
+| `power_transform` | dollars | 1 | $1.66 | $2.44 | 0.964 |
+| `standard_scale` | `log1p` of dollars | 0 | $1.67 | $2.64 | 0.958 |
+| `power_transform` | `log1p` of dollars | 0 | $1.67 | $2.60 | 0.959 |
+
+Every run that predicts dollars beats every run that predicts `log1p` of the fare on all three
+measures, most of all on root mean squared error: squared error on the logarithm counts a dollar off
+a long trip for less than a dollar off a short one. The two distance steps trade places between
+seeds, so the pipeline keeps the simpler `standard_scale`, whose two seeds also agree more closely.
+To reproduce a row, change the `distance` step in `training/features.py` or `TARGET` in
+`training/train.py`, and run `uv run python -m training.train` with that `--seed`.
 
 ## Requirements
 
@@ -65,10 +92,10 @@ make train                  # August 2026, about 60 MB downloaded into data/
 make train MONTH=2026-07    # another month
 ```
 
-`python -m training.train --help` lists the options (data directory, epochs, threads, seed). Trip
-data goes to `data/`, which is ignored. The run writes `artifacts.staging/` and swaps it into
-`artifacts/` only once everything is written, so a failed or interrupted run leaves the served model as
-it was.
+`python -m training.train --help` lists the options (data directory, epoch limit, patience, batch
+size, threads, seed). Trip data goes to `data/`, which is ignored. The run writes
+`artifacts.staging/` and swaps it into `artifacts/` only once everything is written, so a failed or
+interrupted run leaves the served model as it was.
 
 ## API
 
@@ -163,8 +190,8 @@ locally.
 ## Updating fast-inference
 
 The wheel in `wheels/` is the fast-inference library, built from its repository
-(mxlei01/fast-feature-transform) with `uv build --wheel` for free-threaded CPython 3.14 on macOS 27
-arm64. To update it, copy the new wheel into `wheels/`, point
+(mxlei01/fast-feature-transform, which is private) with `uv build --wheel` for free-threaded CPython
+3.14 on macOS 27 arm64. To update it, copy the new wheel into `wheels/`, point
 `[tool.uv.sources]` in `pyproject.toml` at it, run `uv lock && uv sync`, and retrain so the
 artifacts record the version that fitted them.
 

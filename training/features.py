@@ -7,14 +7,14 @@ York's. Both come from integer arithmetic on the epoch, so no calendar or time z
 
 Everything else is the fast-inference pipeline, which is saved with the model: the location IDs and
 time features become embedding indices, with rare and unseen values sharing index 0, and the trip
-distance is made roughly normal.
+distance is standardized to mean 0 and standard deviation 1.
 """
 
 from datetime import datetime, timedelta
 from typing import Any
 
 import numpy as np
-from fast_inference import Cast, LabelEncoder, Pipeline, PowerTransformer, Select
+from fast_inference import Cast, LabelEncoder, Pipeline, Select, StandardScaler
 
 EPOCH: datetime = datetime(1970, 1, 1)  # noqa: DTZ001 - the epoch of naive wall-clock time
 ONE_MICROSECOND: timedelta = timedelta(microseconds=1)
@@ -102,7 +102,7 @@ def record(pickup_zone: int, dropoff_zone: int, pickup: datetime, trip_distance:
 
 
 def build_pipeline() -> Pipeline:
-    """Declare the feature pipeline; fitting it learns the vocabularies and the distance transform.
+    """Declare the feature pipeline; fitting it learns the vocabularies and the distance's mean and spread.
 
     Returns:
         An unfitted pipeline whose output is exactly ``FEATURES``, in that order.
@@ -112,7 +112,7 @@ def build_pipeline() -> Pipeline:
         [
             ("categories", Cast(types={name: "utf8" for name in CATEGORICAL})),
             ("indices", LabelEncoder(columns=CATEGORICAL, min_count=MIN_COUNT)),
-            ("distance", PowerTransformer(columns=NUMERIC)),
+            ("distance", StandardScaler(columns=NUMERIC)),
             ("features", Select(columns=FEATURES)),
         ]
     )

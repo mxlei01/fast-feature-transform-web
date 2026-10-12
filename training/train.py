@@ -9,8 +9,10 @@ configuration with its metrics, and the zone names.
 """
 
 import argparse
+import copy
 import json
 import logging
+import math
 import shutil
 from datetime import UTC, datetime
 from pathlib import Path
@@ -31,6 +33,8 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_MONTH: str = "2026-08"
 EVALUATION_BATCH: int = 65_536
+# What the network predicts; see training.model.
+TARGET: str = "dollars"
 
 
 def open_memmap(index_path: Path) -> np.ndarray:
@@ -83,8 +87,8 @@ def fares(path: Path) -> np.ndarray:
     return pq.read_table(path, columns=["fare_amount"])["fare_amount"].to_numpy()
 
 
-def predict(model: FareNet, categories: torch.Tensor, numbers: torch.Tensor) -> np.ndarray:
-    """Predict fares in dollars, in batches.
+def predict(model: FareNet, categories: torch.Tensor, numbers: torch.Tensor) -> torch.Tensor:
+    """Run the network in evaluation mode, in batches.
 
     Args:
         model: The network.
@@ -92,20 +96,42 @@ def predict(model: FareNet, categories: torch.Tensor, numbers: torch.Tensor) -> 
         numbers: Numeric features.
 
     Returns:
-        The predicted fares.
+        The outputs, in the network's target space.
 
     """
     model.eval()
-    out: list[np.ndarray] = []
+    out: list[torch.Tensor] = []
     with torch.inference_mode():
         for start in range(0, len(categories), EVALUATION_BATCH):
             stop: int = start + EVALUATION_BATCH
-            out.append(torch.expm1(model(categories[start:stop], numbers[start:stop])).numpy())
-    return np.concatenate(out) if out else np.empty(0, np.float32)
+            out.append(model(categories[start:stop], numbers[start:stop]))
+    return torch.cat(out) if out else torch.empty(0)
 
 
-def baseline_mae(train_miles: np.ndarray, train_fares: np.ndarray, miles: np.ndarray, actual: np.ndarray) -> float:
-    """Mean absolute error of a straight line from distance to fare, for comparison.
+def regression_metrics(actual: np.ndarray, predicted: np.ndarray) -> dict[str, float]:
+    """R squared, mean absolute error and root mean squared error, in dollars.
+
+    Args:
+        actual: True fares.
+        predicted: Predicted fares.
+
+    Returns:
+        ``{"r2", "mae", "rmse"}``.
+
+    """
+    error: np.ndarray = predicted.astype(np.float64) - actual
+    spread: float = float(np.sum((actual - actual.mean()) ** 2))
+    return {
+        "r2": 1.0 - float(np.sum(error**2)) / spread if spread > 0 else 0.0,
+        "mae": float(np.mean(np.abs(error))),
+        "rmse": float(np.sqrt(np.mean(error**2))),
+    }
+
+
+def baseline_metrics(
+    train_miles: np.ndarray, train_fares: np.ndarray, miles: np.ndarray, actual: np.ndarray
+) -> dict[str, float]:
+    """Score a straight line from distance to fare, for comparison.
 
     Args:
         train_miles: Training distances.
@@ -114,57 +140,99 @@ def baseline_mae(train_miles: np.ndarray, train_fares: np.ndarray, miles: np.nda
         actual: Validation fares.
 
     Returns:
-        The line's mean absolute error on the validation trips, in dollars.
+        The line's metrics on the validation trips.
 
     """
     slope, intercept = np.polyfit(train_miles, train_fares, 1)
-    return float(np.mean(np.abs(slope * miles + intercept - actual)))
+    return regression_metrics(actual, slope * miles + intercept)
 
 
 def fit_network(
     model: FareNet,
     train: tuple[torch.Tensor, torch.Tensor, torch.Tensor],
-    valid: tuple[torch.Tensor, torch.Tensor, np.ndarray],
+    valid: tuple[torch.Tensor, torch.Tensor, torch.Tensor, np.ndarray],
     *,
-    epochs: int,
+    max_epochs: int,
+    patience: int,
     batch_size: int,
     learning_rate: float,
     seed: int,
-) -> list[dict[str, float]]:
-    """Train with Adam on squared error of ``log1p(fare)``, reporting validation error each epoch.
+) -> tuple[list[dict[str, float]], int]:
+    """Train with Adam on squared error, stopping once validation loss stops improving.
+
+    Each epoch shuffles the training trips into full batches and drops a trailing partial batch,
+    since batch normalization cannot train on a single row; fewer trips than a batch make one
+    batch of them all. After ``patience`` epochs without a lower validation loss the run stops,
+    and the weights of the best epoch are kept.
 
     Args:
         model: The network to train in place.
-        train: Embedding indices, numeric features and ``log1p`` fares of the training trips.
-        valid: Embedding indices, numeric features and fares in dollars of the validation trips.
-        epochs: Passes over the training trips.
+        train: Embedding indices, numeric features and targets of the training trips.
+        valid: Embedding indices, numeric features, targets, and fares in dollars of the
+            validation trips.
+        max_epochs: The most passes over the training trips.
+        patience: Epochs to wait for a lower validation loss.
         batch_size: Trips per step.
         learning_rate: Adam's step size.
         seed: Seed for the shuffling.
 
     Returns:
-        One entry per epoch: training loss and validation mean absolute error in dollars.
+        One entry per epoch run (training loss, validation loss and validation mean absolute
+        error in dollars), and the epoch whose weights were kept.
+
+    Raises:
+        ValueError: If a batch could hold a single trip, or no epoch reached a finite validation
+            loss, so there is nothing worth keeping.
 
     """
     categories, numbers, target = train
+    if batch_size < 2 or len(target) < 2:
+        raise ValueError("batch normalization needs at least two trips in every batch")
+    valid_categories, valid_numbers, valid_target, valid_fares = valid
     optimizer: torch.optim.Optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
     shuffle: torch.Generator = torch.Generator().manual_seed(seed)
+    usable: int = len(target) - len(target) % batch_size if len(target) >= batch_size else len(target)
     history: list[dict[str, float]] = []
-    for epoch in range(1, epochs + 1):
+    best_loss: float = math.inf
+    best_state: dict[str, torch.Tensor] = {}
+    best_epoch: int | None = None
+    stale: int = 0
+    for epoch in range(1, max_epochs + 1):
         model.train()
-        order: torch.Tensor = torch.randperm(len(target), generator=shuffle)
+        order: torch.Tensor = torch.randperm(len(target), generator=shuffle)[:usable]
         total: float = 0.0
-        for start in range(0, len(order), batch_size):
+        for start in range(0, usable, batch_size):
             batch: torch.Tensor = order[start : start + batch_size]
             optimizer.zero_grad()
             loss: torch.Tensor = nn.functional.mse_loss(model(categories[batch], numbers[batch]), target[batch])
             loss.backward()
             optimizer.step()
             total += loss.item() * len(batch)
-        valid_mae: float = float(np.mean(np.abs(predict(model, valid[0], valid[1]) - valid[2])))
-        history.append({"epoch": epoch, "train_loss": total / max(len(order), 1), "valid_mae": valid_mae})
-        logger.info("epoch %d: train loss %.5f, validation MAE $%.3f", epoch, history[-1]["train_loss"], valid_mae)
-    return history
+        output: torch.Tensor = predict(model, valid_categories, valid_numbers)
+        valid_loss: float = nn.functional.mse_loss(output, valid_target).item()
+        valid_mae: float = float(np.mean(np.abs(model.fares(output).numpy() - valid_fares)))
+        history.append(
+            {"epoch": epoch, "train_loss": total / max(usable, 1), "valid_loss": valid_loss, "valid_mae": valid_mae}
+        )
+        logger.info(
+            "epoch %d: train loss %.5f, validation loss %.5f, validation MAE $%.3f",
+            epoch,
+            history[-1]["train_loss"],
+            valid_loss,
+            valid_mae,
+        )
+        if valid_loss < best_loss:
+            best_loss, best_epoch, stale = valid_loss, epoch, 0
+            best_state = copy.deepcopy(model.state_dict())
+        else:
+            stale += 1
+            if stale >= patience:
+                break
+    if best_epoch is None:
+        raise ValueError("no epoch reached a finite validation loss")
+    model.load_state_dict(best_state)
+    model.eval()
+    return history, best_epoch
 
 
 def train_from_prepared(
@@ -173,9 +241,11 @@ def train_from_prepared(
     work_dir: Path,
     out_dir: Path,
     *,
-    epochs: int = 10,
+    target: str = TARGET,
+    max_epochs: int = 300,
+    patience: int = 15,
     batch_size: int = 4096,
-    learning_rate: float = 2e-3,
+    learning_rate: float = 1e-3,
     threads: int = 4,
     seed: int = 0,
 ) -> dict[str, Any]:
@@ -186,7 +256,9 @@ def train_from_prepared(
         valid_path: Prepared validation trips.
         work_dir: Scratch directory for the memmaps.
         out_dir: Artifact directory: ``pipeline/``, ``model.pt`` and ``model.json`` go here.
-        epochs: Passes over the training trips.
+        target: What the network predicts: ``"dollars"`` or ``"log1p"`` of dollars.
+        max_epochs: The most passes over the training trips.
+        patience: Epochs to wait for a lower validation loss before stopping.
         batch_size: Trips per step.
         learning_rate: Adam's step size.
         threads: Threads for fast-inference and torch.
@@ -213,19 +285,34 @@ def train_from_prepared(
     train_categories, train_numbers = tensors(train_records)
     valid_categories, valid_numbers = tensors(valid_records)
 
-    model: FareNet = FareNet(ModelConfig.for_vocabularies(CATEGORICAL, NUMERIC, vocab_sizes))
-    target: torch.Tensor = torch.from_numpy(np.log1p(train_fares).astype(np.float32))
-    history: list[dict[str, float]] = fit_network(
+    model: FareNet = FareNet(ModelConfig(CATEGORICAL, NUMERIC, vocab_sizes, target=target))
+
+    def targets(dollars: np.ndarray) -> torch.Tensor:
+        return torch.from_numpy((np.log1p(dollars) if target == "log1p" else dollars).astype(np.float32))
+
+    train_target: torch.Tensor = targets(train_fares)
+    # The output starts at the average target, so the first epochs refine fares instead of climbing to them.
+    with torch.no_grad():
+        model.output.bias.fill_(train_target.mean().item())
+    history, best_epoch = fit_network(
         model,
-        (train_categories, train_numbers, target),
-        (valid_categories, valid_numbers, valid_fares),
-        epochs=epochs,
+        (train_categories, train_numbers, train_target),
+        (valid_categories, valid_numbers, targets(valid_fares), valid_fares),
+        max_epochs=max_epochs,
+        patience=patience,
         batch_size=batch_size,
         learning_rate=learning_rate,
         seed=seed,
     )
+    train_metrics: dict[str, float] = regression_metrics(
+        train_fares, model.fares(predict(model, train_categories, train_numbers)).numpy()
+    )
+    valid_metrics: dict[str, float] = regression_metrics(
+        valid_fares, model.fares(predict(model, valid_categories, valid_numbers)).numpy()
+    )
     distances = pq.read_table(train_path, columns=["trip_distance"])["trip_distance"].to_numpy()
     valid_distances = pq.read_table(valid_path, columns=["trip_distance"])["trip_distance"].to_numpy()
+    baseline: dict[str, float] = baseline_metrics(distances, train_fares, valid_distances, valid_fares)
     metadata: dict[str, Any] = {
         "trained_at": datetime.now(UTC).isoformat(timespec="seconds"),
         "fast_inference_version": fast_inference.__version__,
@@ -233,14 +320,20 @@ def train_from_prepared(
         "train_trips": len(train_fares),
         "valid_trips": len(valid_fares),
         "history": history,
-        "valid_mae": history[-1]["valid_mae"] if history else None,
-        "baseline_valid_mae": baseline_mae(distances, train_fares, valid_distances, valid_fares),
+        "best_epoch": best_epoch,
+        "train_metrics": train_metrics,
+        "valid_metrics": valid_metrics,
+        "baseline_valid_metrics": baseline,
+        "valid_mae": valid_metrics["mae"],
+        "baseline_valid_mae": baseline["mae"],
     }
     save(model, out_dir, metadata)
     logger.info(
-        "validation MAE $%.3f against $%.3f for a line from distance alone",
-        metadata["valid_mae"],
-        metadata["baseline_valid_mae"],
+        "validation MAE $%.3f, RMSE $%.3f, R2 %.4f; a line from distance alone: MAE $%.3f",
+        valid_metrics["mae"],
+        valid_metrics["rmse"],
+        valid_metrics["r2"],
+        baseline["mae"],
     )
     return metadata
 
@@ -278,11 +371,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--month", default=DEFAULT_MONTH, help="YYYY-MM of the TLC file to train on")
     parser.add_argument("--data-dir", type=Path, default=Path("data"), help="downloads, splits and memmaps")
     parser.add_argument("--out", type=Path, default=Path("artifacts"), help="where the served artifacts go")
-    parser.add_argument("--epochs", type=int, default=10)
+    parser.add_argument("--max-epochs", type=int, default=300)
+    parser.add_argument("--patience", type=int, default=15)
     parser.add_argument("--batch-size", type=int, default=4096)
     parser.add_argument("--threads", type=int, default=4)
     parser.add_argument("--seed", type=int, default=0)
     args = parser.parse_args(argv)
+    if args.batch_size < 2:
+        parser.error("--batch-size must be at least 2: batch normalization cannot train on one trip")
+    if args.max_epochs < 1 or args.patience < 1:
+        parser.error("--max-epochs and --patience must be at least 1")
     log.configure()
     prepared: data.Prepared = data.prepare(args.month, args.data_dir)
     zones: Path = data.download(data.ZONES_URL, args.data_dir / "raw" / "taxi_zone_lookup.csv", max_bytes=1 << 20)
@@ -293,7 +391,8 @@ def main(argv: list[str] | None = None) -> int:
         prepared.valid,
         args.data_dir / "memmap" / args.month,
         staging,
-        epochs=args.epochs,
+        max_epochs=args.max_epochs,
+        patience=args.patience,
         batch_size=args.batch_size,
         threads=args.threads,
         seed=args.seed,

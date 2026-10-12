@@ -1,19 +1,24 @@
-"""The fare network: an embedding per categorical feature, joined with the numeric ones, into an MLP.
+"""The fare network: categorical embeddings and numeric features into a batch-normalized MLP.
 
-Each categorical feature arrives as the fast-inference LabelEncoder's index, where 0 is the shared
-slot for an unknown or missing value, so ``vocab_size`` rows make its embedding table. The network
-predicts ``log1p`` of the fare, which treats a dollar off a $10 trip like ten dollars off a $100 one.
+Every categorical feature arrives as the fast-inference LabelEncoder's index, where 0 is the slot
+for a rare or unseen value. All of them share one embedding table: each feature's indices are
+shifted by an offset so they land in their own rows, and one lookup embeds every feature of a batch
+at once. The embeddings, flattened, join the numeric features and go through hidden layers of
+Linear, BatchNorm, ReLU and Dropout to a single output.
+
+The output is the fare in the space the configuration's ``target`` names: ``"dollars"``, or
+``"log1p"`` for the logarithm of one plus the fare. ``fares`` turns it back into dollars.
 """
 
 import json
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
 import torch
 from torch import nn
 
-MAX_EMBEDDING_DIM: int = 16
+TARGETS: frozenset[str] = frozenset({"dollars", "log1p"})
 
 
 @dataclass(frozen=True)
@@ -24,7 +29,8 @@ class ModelConfig:
         categorical: Categorical feature names, in input order.
         numeric: Numeric feature names, in input order.
         vocab_sizes: Embedding rows per categorical feature, index 0 included.
-        embedding_dims: Embedding width per categorical feature.
+        target: What the output is: ``"dollars"`` or ``"log1p"`` of dollars.
+        embedding_dim: Width of every feature's embedding.
         hidden: Width of each hidden layer.
         dropout: Dropout after each hidden layer while training.
 
@@ -33,39 +39,29 @@ class ModelConfig:
     categorical: list[str]
     numeric: list[str]
     vocab_sizes: dict[str, int]
-    embedding_dims: dict[str, int]
-    hidden: list[int]
-    dropout: float
+    target: str = "dollars"
+    embedding_dim: int = 8
+    hidden: list[int] = field(default_factory=lambda: [128, 64, 32])
+    dropout: float = 0.3
 
-    @classmethod
-    def for_vocabularies(
-        cls,
-        categorical: list[str],
-        numeric: list[str],
-        vocab_sizes: dict[str, int],
-        *,
-        hidden: tuple[int, ...] = (128, 64),
-        dropout: float = 0.1,
-    ) -> ModelConfig:
-        """Size each embedding from its vocabulary: about half of it, at most 16 wide.
+    def __post_init__(self) -> None:
+        """Check the target and that every categorical feature has a vocabulary.
 
-        Args:
-            categorical: Categorical feature names, in input order.
-            numeric: Numeric feature names, in input order.
-            vocab_sizes: Embedding rows per categorical feature.
-            hidden: Width of each hidden layer.
-            dropout: Dropout after each hidden layer.
-
-        Returns:
-            The configuration.
+        Raises:
+            ValueError: If either is wrong.
 
         """
-        dims: dict[str, int] = {name: min(MAX_EMBEDDING_DIM, (vocab_sizes[name] + 1) // 2) for name in categorical}
-        return cls(categorical, numeric, dict(vocab_sizes), dims, list(hidden), dropout)
+        if self.target not in TARGETS:
+            raise ValueError(f"target must be one of {sorted(TARGETS)}")
+        missing: list[str] = [name for name in self.categorical if name not in self.vocab_sizes]
+        if missing:
+            raise ValueError(f"no vocabulary size for {missing}")
 
 
 class FareNet(nn.Module):
-    """Predict ``log1p(fare)`` from embedding indices and numeric features."""
+    """Predict a trip's fare from embedding indices and numeric features."""
+
+    offsets: torch.Tensor
 
     def __init__(self, config: ModelConfig) -> None:
         """Build the layers a configuration describes.
@@ -76,16 +72,20 @@ class FareNet(nn.Module):
         """
         super().__init__()
         self.config: ModelConfig = config
-        self.embeddings: nn.ModuleList = nn.ModuleList(
-            nn.Embedding(config.vocab_sizes[name], config.embedding_dims[name]) for name in config.categorical
-        )
-        width: int = sum(config.embedding_dims[name] for name in config.categorical) + len(config.numeric)
+        starts: list[int] = []
+        rows: int = 0
+        for name in config.categorical:
+            starts.append(rows)
+            rows += config.vocab_sizes[name]
+        self.register_buffer("offsets", torch.tensor(starts, dtype=torch.int64))
+        self.embedding: nn.Embedding = nn.Embedding(rows, config.embedding_dim)
+        width: int = len(config.categorical) * config.embedding_dim + len(config.numeric)
         layers: list[nn.Module] = []
         for size in config.hidden:
-            layers += [nn.Linear(width, size), nn.ReLU(), nn.Dropout(config.dropout)]
+            layers += [nn.Linear(width, size), nn.BatchNorm1d(size), nn.ReLU(), nn.Dropout(config.dropout)]
             width = size
-        layers.append(nn.Linear(width, 1))
-        self.mlp: nn.Sequential = nn.Sequential(*layers)
+        self.hidden: nn.Sequential = nn.Sequential(*layers)
+        self.output: nn.Linear = nn.Linear(width, 1)
 
     def forward(self, categories: torch.Tensor, numbers: torch.Tensor) -> torch.Tensor:
         """Predict for a batch.
@@ -95,12 +95,23 @@ class FareNet(nn.Module):
             numbers: Numeric features, float32, one column per numeric feature.
 
         Returns:
-            ``log1p(fare)`` per row.
+            One output per row, in the configuration's target space.
 
         """
-        parts: list[torch.Tensor] = [embed(categories[:, i]) for i, embed in enumerate(self.embeddings)]
-        parts.append(numbers)
-        return self.mlp(torch.cat(parts, dim=1)).squeeze(1)
+        embedded: torch.Tensor = self.embedding(categories + self.offsets)
+        return self.output(self.hidden(torch.cat([embedded.flatten(1), numbers], dim=1))).squeeze(1)
+
+    def fares(self, output: torch.Tensor) -> torch.Tensor:
+        """Turn outputs into fares in dollars.
+
+        Args:
+            output: What ``forward`` returned.
+
+        Returns:
+            The fares.
+
+        """
+        return torch.expm1(output) if self.config.target == "log1p" else output
 
 
 def save(model: FareNet, directory: Path, metadata: dict[str, Any]) -> None:
@@ -122,6 +133,8 @@ def load(directory: Path) -> tuple[FareNet, dict[str, Any]]:
     """Rebuild a saved network for inference.
 
     The weights load with ``weights_only=True``, which reads tensors only and never runs pickled code.
+    They must have been trained with the configuration beside them: the offsets saved with the
+    shared embedding table must be the ones its vocabulary sizes give.
 
     Args:
         directory: Artifact directory written by ``save``.
@@ -129,9 +142,19 @@ def load(directory: Path) -> tuple[FareNet, dict[str, Any]]:
     Returns:
         The network in evaluation mode, and the parsed ``model.json``.
 
+    Raises:
+        ValueError: If ``model.json`` holds no configuration this code can build, or ``model.pt``
+            was trained with other vocabularies.
+
     """
     document: dict[str, Any] = json.loads((directory / "model.json").read_text())
-    model: FareNet = FareNet(ModelConfig(**document["config"]))
+    try:
+        model: FareNet = FareNet(ModelConfig(**document["config"]))
+    except (KeyError, TypeError) as error:  # written by other code, or no configuration at all
+        raise ValueError(f"{directory / 'model.json'} holds no configuration this code can build") from error
+    offsets: torch.Tensor = model.offsets.clone()
     model.load_state_dict(torch.load(directory / "model.pt", weights_only=True))
+    if not torch.equal(model.offsets, offsets):
+        raise ValueError(f"{directory / 'model.pt'} was not trained with the vocabularies in model.json")
     model.eval()
     return model, document

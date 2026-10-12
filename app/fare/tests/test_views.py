@@ -1,9 +1,11 @@
 import json
 import math
+import shutil
 from pathlib import Path
 from typing import Any
 
 import pytest
+from django.template.defaultfilters import floatformat
 from django.test import Client
 from pytest_django.fixtures import Settings
 
@@ -32,12 +34,45 @@ def test_the_page_shows_the_form_the_pipeline_and_escapes_zone_names(client: Cli
     assert "&lt;script&gt;alert(&quot;zone&quot;)&lt;/script&gt;" in page
 
 
+def test_the_page_shows_the_models_figures(client: Client, served_artifacts: Path) -> None:
+    info: dict[str, Any] = json.loads((served_artifacts / "model.json").read_text())
+    page: str = client.get("/").content.decode()
+    valid: dict[str, float] = info["valid_metrics"]
+    baseline: dict[str, float] = info["baseline_valid_metrics"]
+    assert (
+        f"${floatformat(valid['mae'], 2)} mean absolute error, ${floatformat(valid['rmse'], 2)} root mean squared"
+        f" error, R² {floatformat(valid['r2'], 3)}"
+    ) in page
+    assert (
+        f"${floatformat(baseline['mae'], 2)}, ${floatformat(baseline['rmse'], 2)} and R²"
+        f" {floatformat(baseline['r2'], 3)} for a straight line"
+    ) in page
+    assert f"Embeddings of width {info['config']['embedding_dim']} for " in page
+    assert (
+        f"dropout {info['config']['dropout']}; kept from epoch {info['best_epoch']} of {len(info['history'])}" in page
+    )
+
+
+def test_the_page_names_the_epoch_kept_and_the_epochs_run(
+    client: Client, settings: Settings, served_artifacts: Path, tmp_path: Path
+) -> None:
+    longer: Path = tmp_path / "longer"
+    shutil.copytree(served_artifacts, longer)
+    info: dict[str, Any] = json.loads((longer / "model.json").read_text())
+    info["history"] = [{**info["history"][0], "epoch": epoch} for epoch in (1, 2, 3)]
+    info["best_epoch"] = 2
+    (longer / "model.json").write_text(json.dumps(info))
+    settings.FARE_ARTIFACTS_DIR = longer
+    assert "kept from epoch 2 of 3" in client.get("/").content.decode()
+
+
 def test_posting_a_trip_prices_it_and_shows_each_step(client: Client) -> None:
     response = client.post("/", {**TRIP, "trip_distance": "2.40"})
     assert response.status_code == 200
     page: str = response.content.decode()
     assert "Estimated fare" in page
-    assert "label_encode" in page and "power_transform" in page
+    assert "label_encode" in page and "standard_scale" in page
+    assert "minus the mean" in page
     assert page.count('class="changed"') >= 4
 
 

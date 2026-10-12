@@ -30,7 +30,7 @@ package = false
 
 [tool.uv.sources]
 # fast-inference is not on PyPI. This wheel was built with `uv build --wheel`
-# from mxlei01/fast-feature-transform for free-threaded CPython 3.14 on arm64
+# from mxlei01/fast-feature-transform (private) for free-threaded CPython 3.14 on arm64
 # macOS; see README.md for rebuilding it.
 fast-inference = { path = "wheels/fast_inference-0.0.1.dev186+gac4dc4158-cp314-cp314t-macosx_27_0_arm64.whl" }
 
