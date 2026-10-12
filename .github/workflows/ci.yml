@@ -1,0 +1,39 @@
+# CI: lint, format and security checks on every PR and master push.
+#
+# The tests and the type check need the vendored fast-inference wheel, which is built for
+# free-threaded CPython 3.14 on macOS 27 arm64 only, so they run locally with `make all` (see
+# README.md). Ruff and bandit read the source without installing the project.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.12.17"
+
+      - name: Lint (ruff)
+        run: uvx ruff@0.17.0 check app training
+
+      - name: Format check (ruff)
+        run: uvx ruff@0.17.0 format --check app training
+
+      - name: Security check (bandit)
+        run: uvx --from "bandit[toml]==1.9.4" bandit -r -c pyproject.toml app training

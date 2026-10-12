@@ -1,0 +1,73 @@
+{% extends "fare/base.html" %}
+{% block content %}
+<section class="card">
+  <h2>Price a trip</h2>
+  <form method="post" action="{% url 'fare:index' %}" novalidate>
+    {% csrf_token %}
+    {% if form.non_field_errors %}<ul class="errors">{% for error in form.non_field_errors %}<li>{{ error }}</li>{% endfor %}</ul>{% endif %}
+    <div class="fields">
+      {% for field in form %}
+      <div class="field{% if field.errors %} invalid{% endif %}">
+        <label for="{{ field.id_for_label }}">{{ field.label }}</label>
+        {{ field }}
+        {% if field.errors %}<ul class="errors">{% for error in field.errors %}<li>{{ error }}</li>{% endfor %}</ul>{% endif %}
+      </div>
+      {% endfor %}
+    </div>
+    <button type="submit">Estimate the fare</button>
+  </form>
+</section>
+
+{% if prediction %}
+<section class="card result">
+  <h2>Estimated fare <span class="fare">${{ prediction.fare|floatformat:2 }}</span></h2>
+  {% if prediction.unknown %}<p class="note">Rare or unseen in training: {{ prediction.unknown|join:", " }}. The network used the estimate it keeps for all such values, so this fare is less certain.</p>{% endif %}
+  <dl class="timings">
+    <div><dt>Building the record</dt><dd>{{ prediction.timings_us.record|floatformat:1 }} µs</dd></div>
+    <div><dt>fast-inference pipeline</dt><dd>{{ prediction.timings_us.pipeline|floatformat:1 }} µs</dd></div>
+    <div><dt>Network</dt><dd>{{ prediction.timings_us.network|floatformat:1 }} µs</dd></div>
+  </dl>
+  <h3>The pipeline, step by step</h3>
+  <p class="note">Each row is the record after that step; changed values are marked. The last row is what the network received.</p>
+  <div class="scroll">
+    <table class="trace">
+      <thead><tr><th>Step</th><th>Kernel</th><th>Record</th></tr></thead>
+      <tbody>
+        <tr><td>input</td><td></td><td><ul class="record">{% for key, value in prediction.record.items %}<li><span class="key">{{ key }}</span> {{ value }}</li>{% endfor %}</ul></td></tr>
+        {% for step in prediction.trace %}
+        <tr>
+          <td>{{ step.stage }}</td>
+          <td><code>{{ step.kernel }}</code></td>
+          <td><ul class="record">{% for key, value in step.output.items %}<li{% if key in step.changed %} class="changed"{% endif %}><span class="key">{{ key }}</span> {{ value }}</li>{% endfor %}</ul></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endif %}
+
+<section class="card">
+  <h2>The fitted pipeline</h2>
+  <p class="note">From <code>stages_json()</code> and <code>stages_state()</code>; also at <a href="{% url 'fare:api_pipeline' %}">/api/pipeline</a>.</p>
+  <ol class="stages">
+    {% for step in pipeline %}
+    <li>
+      <h3>{{ step.stage }} <code>{{ step.kernel }}</code></h3>
+      <ul>{% for line in step.summary %}<li>{{ line }}</li>{% endfor %}</ul>
+      <details><summary>Parameters</summary><pre>{{ step.params }}</pre></details>
+    </li>
+    {% endfor %}
+  </ol>
+</section>
+
+<section class="card">
+  <h2>The model</h2>
+  <dl class="facts">
+    <div><dt>Trained on</dt><dd>{{ info.month|default:"synthetic trips" }}: {{ info.train_trips }} trips, validated on {{ info.valid_trips }} later ones</dd></div>
+    <div><dt>Validation error</dt><dd>${{ info.valid_mae|floatformat:2 }} mean absolute error, against ${{ info.baseline_valid_mae|floatformat:2 }} for a straight line from distance alone</dd></div>
+    <div><dt>Network</dt><dd>Embeddings for {{ info.config.categorical|join:", " }}; hidden layers {{ info.config.hidden|join:" and " }}</dd></div>
+    <div><dt>Libraries</dt><dd>fast-inference {{ info.fast_inference_version }}, torch {{ info.torch_version }}</dd></div>
+  </dl>
+</section>
+{% endblock %}

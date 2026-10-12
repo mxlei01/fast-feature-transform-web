@@ -1,0 +1,21 @@
+{% load static %}<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}NYC taxi fare{% endblock %}</title>
+  <link rel="stylesheet" href="{% static 'fare/app.css' %}">
+</head>
+<body>
+  <header class="site">
+    <h1><a href="{% url 'fare:index' %}">NYC taxi fare</a></h1>
+    <p>A neural network on fast-inference features, served from Django.</p>
+  </header>
+  <main>
+    {% block content %}{% endblock %}
+  </main>
+  <footer class="site">
+    <p>Trained on NYC Taxi and Limousine Commission yellow taxi trip records. The fare is the metered fare, before tips, tolls and surcharges.</p>
+  </footer>
+</body>
+</html>

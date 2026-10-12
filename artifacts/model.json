@@ -1,0 +1,92 @@
+{
+  "baseline_valid_mae": 2.4135212711498535,
+  "config": {
+    "categorical": [
+      "PULocationID",
+      "DOLocationID",
+      "pickup_hour",
+      "pickup_weekday"
+    ],
+    "dropout": 0.1,
+    "embedding_dims": {
+      "DOLocationID": 16,
+      "PULocationID": 16,
+      "pickup_hour": 13,
+      "pickup_weekday": 4
+    },
+    "hidden": [
+      128,
+      64
+    ],
+    "numeric": [
+      "trip_distance"
+    ],
+    "vocab_sizes": {
+      "DOLocationID": 256,
+      "PULocationID": 165,
+      "pickup_hour": 25,
+      "pickup_weekday": 8
+    }
+  },
+  "fast_inference_version": "0.0.1.dev186+gac4dc4158",
+  "history": [
+    {
+      "epoch": 1,
+      "train_loss": 0.2232620326018004,
+      "valid_mae": 2.2470312790301112
+    },
+    {
+      "epoch": 2,
+      "train_loss": 0.06823929807268937,
+      "valid_mae": 2.0840412237167922
+    },
+    {
+      "epoch": 3,
+      "train_loss": 0.06208876952190636,
+      "valid_mae": 2.0340463099107104
+    },
+    {
+      "epoch": 4,
+      "train_loss": 0.05696627563583508,
+      "valid_mae": 1.956987196575052
+    },
+    {
+      "epoch": 5,
+      "train_loss": 0.05205148867365281,
+      "valid_mae": 1.9475313996797017
+    },
+    {
+      "epoch": 6,
+      "train_loss": 0.04733153917535091,
+      "valid_mae": 1.9192162451614514
+    },
+    {
+      "epoch": 7,
+      "train_loss": 0.04364805571937755,
+      "valid_mae": 1.812551292922928
+    },
+    {
+      "epoch": 8,
+      "train_loss": 0.04084727995135976,
+      "valid_mae": 1.774233407295954
+    },
+    {
+      "epoch": 9,
+      "train_loss": 0.03826638588186476,
+      "valid_mae": 1.7492917321584103
+    },
+    {
+      "epoch": 10,
+      "train_loss": 0.03578229557572523,
+      "valid_mae": 1.7183227391095186
+    }
+  ],
+  "month": "2026-08",
+  "rows_kept": 2105008,
+  "rows_read": 3336716,
+  "torch_version": "2.14.1",
+  "train_trips": 1643095,
+  "trained_at": "2026-10-12T08:39:24+00:00",
+  "valid_mae": 1.7183227391095186,
+  "valid_trips": 461913
+}

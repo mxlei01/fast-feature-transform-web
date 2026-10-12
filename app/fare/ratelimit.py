@@ -1,0 +1,76 @@
+"""Who the client is, and a per-client fixed-window limit on how often it may ask.
+
+``client_ip`` is the one place the client's address is decided, so the request log and the limiter
+always agree. X-Forwarded-For is a list any client can prepend to, so only the entries appended by
+the proxies we run (``RATELIMIT_TRUSTED_FORWARDED_HOPS``, counted from the right) are believed; with
+no trusted proxy it is ignored and the socket's address is used.
+"""
+
+import ipaddress
+
+from django.conf import settings
+from django.core.cache import cache
+from django.http import HttpRequest
+
+WINDOW_SECONDS: int = 60
+
+
+def _valid_ip(value: str) -> bool:
+    """Tell whether a string is an IPv4 or IPv6 address.
+
+    Args:
+        value: The candidate.
+
+    Returns:
+        True if it parses as an address.
+
+    """
+    try:
+        ipaddress.ip_address(value)
+    except ValueError:
+        return False
+    return True
+
+
+def client_ip(request: HttpRequest) -> str:
+    """Return the client's address, trusting only our own proxies' X-Forwarded-For entries.
+
+    Args:
+        request: The request.
+
+    Returns:
+        The address, or ``"?"`` when none is known.
+
+    """
+    hops: int = getattr(settings, "RATELIMIT_TRUSTED_FORWARDED_HOPS", 0)
+    if hops > 0:
+        entries: list[str] = [
+            part.strip() for part in request.META.get("HTTP_X_FORWARDED_FOR", "").split(",") if part.strip()
+        ]
+        if entries:
+            candidate: str = entries[max(len(entries) - hops, 0)]
+            if _valid_ip(candidate):
+                return candidate
+    return request.META.get("REMOTE_ADDR") or "?"
+
+
+def limited(request: HttpRequest, bucket: str, limit: int) -> bool:
+    """Count a request against its client's budget for this minute.
+
+    Args:
+        request: The request.
+        bucket: Name of the budget, so different endpoints can count separately.
+        limit: Requests allowed per client per minute.
+
+    Returns:
+        True when this request goes over the limit and should be refused.
+
+    """
+    key: str = f"ratelimit:{bucket}:{client_ip(request)}"
+    cache.add(key, 0, WINDOW_SECONDS)
+    try:
+        count: int = cache.incr(key)
+    except ValueError:  # the window expired between add and incr
+        cache.set(key, 1, WINDOW_SECONDS)
+        count = 1
+    return count > limit
