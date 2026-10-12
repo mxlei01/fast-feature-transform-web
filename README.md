@@ -1,0 +1,174 @@
+# fast-feature-transform-web
+
+A small Django site that prices New York City yellow taxi trips with a neural network, and shows
+how each trip's features were made. The features come from
+[fast-inference](#updating-fast-inference), a feature pipeline library with a C++ core: the same
+fitted pipeline that wrote the training data transforms every request.
+
+| | |
+| --- | --- |
+| Data | NYC TLC yellow taxi trips, August 2026: 2,105,008 of 3,336,716 trips kept |
+| Split | 1,643,095 trips from August 1–24 for training, 461,913 from August 25–31 for validation |
+| Validation error | **$1.72** mean absolute error, against $2.41 for a straight line from distance alone |
+| Request cost | about 10–20 µs in the pipeline and 200 µs in the network, on an M4 Mac mini |
+
+## How it works
+
+**Training** (`training/`):
+
+1. Download one month of [TLC trip records](https://www.nyc.gov/site/tlc/about/tlc-trip-record-data.page)
+   and keep ordinary metered trips: card or cash, the standard rate, a fare from the $3.00 meter
+   drop to $200, 0–100 miles, 1–180 minutes, 1–6 passengers, both zones inside the city.
+2. Turn the pickup time into its hour and weekday. A time is carried as an epoch, microseconds since
+   1970 counting the New York wall clock, which is how fast-inference reads a naive `datetime`, so
+   training and serving compute the same numbers.
+3. Fit the fast-inference pipeline on the training days:
+
+   | Step | Kernel | Learns |
+   | --- | --- | --- |
+   | `categories` | `cast` | nothing: location IDs, hour and weekday become text |
+   | `indices` | `label_encode` | an index per value seen at least 10 times; rare and unseen values share index 0 |
+   | `distance` | `power_transform` | a Yeo-Johnson power that makes distance roughly normal |
+   | `features` | `select` | nothing: fixes the output columns and their order |
+
+4. Write both splits through the pipeline straight into memmaps, and train the network on them: an
+   embedding per categorical feature, joined with the distance, into a 128-64 MLP that predicts
+   `log1p` of the fare.
+5. Save everything serving needs in `artifacts/`: the pipeline, the weights, the configuration with
+   its metrics, and the zone names. The artifacts are small (about 150 KB) and committed.
+
+**Serving** (`app/`): the model loads once per process, after checking that its pipeline and network
+come from the same training run. A request's trip is validated, turned into the same record, run
+through `transform_dict` and the network, and answered with the fare, how long each part took, and
+the trip after every pipeline step. The page also describes the fitted pipeline from `stages_json()`
+and `stages_state()`.
+
+What the model does not cover: the airport flat fares (JFK to Manhattan, Newark and the negotiated
+rates are left out of training), and zones with fewer than 10 trips in the training days, which share
+one estimate; the page and the API name such values in `unknown`.
+
+## Requirements
+
+- macOS 27 or later on Apple silicon: the fast-inference wheel in `wheels/` is tagged `macosx_27_0_arm64`.
+- [uv](https://docs.astral.sh/uv/), which installs the free-threaded CPython 3.14 that
+  `.python-version` names.
+
+```sh
+uv sync
+make run    # http://127.0.0.1:8000, DEBUG on
+```
+
+## Training
+
+```sh
+make train                  # August 2026, about 60 MB downloaded into data/
+make train MONTH=2026-07    # another month
+```
+
+`python -m training.train --help` lists the options (data directory, epochs, threads, seed). Trip
+data goes to `data/`, which is ignored. The run writes `artifacts.staging/` and swaps it into
+`artifacts/` only once everything is written, so a failed or interrupted run leaves the served model as
+it was.
+
+## API
+
+`POST /api/predict` takes exactly four fields:
+
+```sh
+curl -s http://127.0.0.1:8000/api/predict \
+  -H 'Content-Type: application/json' \
+  -d '{"pickup_zone": 161, "dropoff_zone": 236, "pickup_time": "2026-08-12T09:15", "trip_distance": 2.4}'
+```
+
+| Field | Rule |
+| --- | --- |
+| `pickup_zone`, `dropoff_zone` | an integer TLC location ID from 1 to 263 that the zone list holds |
+| `pickup_time` | a string, exactly `YYYY-MM-DDTHH:MM` or `YYYY-MM-DDTHH:MM:SS`, New York time without an offset, 2009–2099 |
+| `trip_distance` | a number of miles from 0.1 to 100 with at most two decimal places |
+
+The answer holds `fare` (the metered fare in dollars, before tips, tolls and surcharges), `features`
+(what the network received), `trace` (each step's stage, kernel, output record and changed keys),
+`timings_us`, and `unknown` (the features whose value was rare or unseen in training). A request that is not exactly such an object gets a 400 with a fixed message, a body
+over 4 KB gets 413, any other content type gets 415, and too many requests get 429.
+
+`GET /api/pipeline` returns `{"stages": stages_json, "states": stages_state}`, and `GET /healthz`
+reports whether the model is loaded; it answers over plain HTTP too, for probes that bypass the TLS
+proxy.
+
+## Deploying
+
+`make serve` runs gunicorn on 127.0.0.1:8000 with DEBUG off: one process, so one copy of the model and one
+rate-limit budget per client, with eight threads that run in parallel on free-threaded Python. It needs:
+
+| Variable | Meaning |
+| --- | --- |
+| `DJANGO_SECRET_KEY` | required; for example `python -c "import secrets; print(secrets.token_urlsafe(50))"` |
+| `DJANGO_ALLOWED_HOSTS` | comma-separated host names (default `localhost,127.0.0.1`) |
+| `DJANGO_CSRF_TRUSTED_ORIGINS` | the site's origin, such as `https://fare.example.com`, behind a proxy |
+| `DJANGO_SSL_REDIRECT` | `false` when no TLS proxy is in front (default `true`) |
+| `RATELIMIT_TRUSTED_FORWARDED_HOPS` | how many proxies in front append `X-Forwarded-For` (default 0) |
+| `FARE_ARTIFACTS_DIR` | another trained model (default `artifacts/`) |
+| `FARE_RATE_LIMIT` | predictions per client per minute (default 30), counted per server process |
+| `DJANGO_HSTS_SECONDS`, `DJANGO_HSTS_SUBDOMAINS`, `DJANGO_HSTS_PRELOAD` | HSTS over HTTPS (one year; off; off) |
+| `LOG_FORMAT`, `LOG_LEVEL` | `json` or `plain` (default `json` with DEBUG off), and the level |
+
+For example, locally without TLS:
+
+```sh
+DJANGO_SECRET_KEY=... DJANGO_SSL_REDIRECT=false make serve
+```
+
+## Security
+
+Every value a client sends goes through one Django form (`app/fare/forms.py`), the page's and the
+API's alike:
+
+- **Zones** must be one of the listed zone IDs.
+- **Times** must be in the one accepted format, with no offset, and fall inside 2009–2099.
+- **Distances** must be a decimal number in range: `nan`, `inf`, exponents beyond the range and
+  extra decimal places are refused.
+- **The API's JSON** must be an object with exactly the four keys and the right types. A bool is not
+  an integer, and `NaN`/`Infinity`, which Python's `json` would accept, are refused. Error messages
+  never repeat what the client sent.
+- **Request bodies** are capped at 4 KB.
+- **Templates** escape everything, and the Content Security Policy allows no script at all.
+- **Other headers:** forms may only post back to the site, and no site may frame it. Responses
+  also set `nosniff`, a same-origin referrer policy and a Permissions Policy.
+- **CSRF:** the form needs Django's token (an HttpOnly, SameSite=Strict cookie). The API is
+  stateless and has no cookie to ride on.
+- **Rate limits:** predictions are limited per client address. `X-Forwarded-For` is believed only
+  for the proxies you declare.
+- **No stored state:** there is no database, no session and no login.
+- **Failures** are logged with their traceback, and the client gets a fixed message.
+- **Model loading:** the weights load with `torch.load(..., weights_only=True)`, which reads
+  tensors and never runs pickled code.
+
+## Logging
+
+Every request except the health check is logged once by `fare.request` with its method, path,
+status, duration, client address and user agent. Values that come from the client are cut to 200 characters, with control
+characters escaped so a request cannot forge a log line. With `LOG_FORMAT=json` each record is
+one JSON object; the plain format reads `POST /api/predict 200 3ms`. Training logs the same way.
+
+## Development
+
+```sh
+make all          # format, lint, type check, tests, bandit
+make pytest       # tests only: they train a small model on synthetic trips, no download
+```
+
+CI runs ruff and bandit. The tests and the type check need the macOS-only wheel, so they run
+locally.
+
+## Updating fast-inference
+
+The wheel in `wheels/` is the fast-inference library, built from its repository
+(mxlei01/fast-feature-transform) with `uv build --wheel` for free-threaded CPython 3.14 on macOS 27
+arm64. To update it, copy the new wheel into `wheels/`, point
+`[tool.uv.sources]` in `pyproject.toml` at it, run `uv lock && uv sync`, and retrain so the
+artifacts record the version that fitted them.
+
+## Data and license
+
+Trip records and zone names are published by the NYC Taxi and Limousine Commission. The code is
+MIT licensed; see `LICENSE`.

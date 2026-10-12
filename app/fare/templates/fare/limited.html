@@ -1,0 +1,8 @@
+{% extends "fare/base.html" %}
+{% block title %}Too many requests{% endblock %}
+{% block content %}
+<section class="card">
+  <h2>Too many requests</h2>
+  <p>Please wait {{ seconds }} seconds before pricing another trip.</p>
+</section>
+{% endblock %}

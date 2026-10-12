@@ -1,0 +1,61 @@
+[project]
+name = "fast-feature-transform-web"
+version = "0.1.0"
+description = "Train a NYC taxi fare model on fast-inference features and serve it from a small Django site."
+readme = "README.md"
+requires-python = ">=3.14,<3.15"
+dependencies = [
+    "django>=6.1.2",
+    "fast-inference",
+    "gunicorn>=26.2.0",
+    "numpy>=2.5.4",
+    "pyarrow>=26.0.0",
+    "python-json-logger>=4.2.0",
+    "torch>=2.14.1",
+    "whitenoise>=6.12.0",
+]
+
+[dependency-groups]
+dev = [
+    "bandit>=1.9.4",
+    "pytest>=9.0.0",
+    "pytest-django>=4.11.1",
+    "ruff>=0.16.5",
+    "ty>=0.0.75",
+]
+
+[tool.uv]
+# No [build-system]: uv installs the dependencies and never the project itself.
+package = false
+
+[tool.uv.sources]
+# fast-inference is not on PyPI. This wheel was built with `uv build --wheel`
+# from mxlei01/fast-feature-transform for free-threaded CPython 3.14 on arm64
+# macOS; see README.md for rebuilding it.
+fast-inference = { path = "wheels/fast_inference-0.0.1.dev186+gac4dc4158-cp314-cp314t-macosx_27_0_arm64.whl" }
+
+[tool.ty.environment]
+extra-paths = ["app"]
+
+[tool.bandit]
+skips = ["B101"]
+exclude_dirs = ["*venv*"]
+
+[tool.ruff]
+lint.select = ["E", "F", "PL", "D", "C90", "I"]
+lint.ignore = [
+    "D202", "D213", "D407", "D203", "D406", "D107",
+    "PLR2004", "PLR0915", "PLR0912", "C901", "PLR0913", "PLR0917", "PLR0911", "PLC0415",
+]
+# Test modules and functions document themselves by name (D100, D103); magic values in asserts are the point.
+lint.per-file-ignores = { "**/tests/*" = ["PLR2004", "D100", "D103"] }
+line-length = 120
+target-version = "py314"
+
+[tool.pytest.ini_options]
+DJANGO_SETTINGS_MODULE = "app.test_settings"
+testpaths = ["training/tests", "app/fare/tests"]
+pythonpath = [".", "app"]
+addopts = "-ra --strict-markers"
+# A warning fails the run, so a deprecation is noticed when the lock is upgraded.
+filterwarnings = ["error"]

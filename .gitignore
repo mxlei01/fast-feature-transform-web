@@ -1,0 +1,23 @@
+.idea
+__pycache__
+*.pyc
+.DS_Store
+.venv/
+venv/
+logs/
+*.log
+*.db
+*.sqlite3
+.coverage
+.coverage.*
+htmlcov/
+.pytest_cache/
+.ruff_cache/
+# All dotenv files may hold credentials.
+.env
+.env.*
+# Downloaded trip data and its prepared splits; artifacts/ (the trained model) is committed.
+data/
+# A training run writes here and swaps the result into artifacts/ only when it is complete.
+artifacts.staging/
+artifacts.old/
