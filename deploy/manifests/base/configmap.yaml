@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fare-web-config
+  labels: { app: fare-web }
+# Settings the site reads at startup (see the docstring of app/app/settings.py). DJANGO_SECRET_KEY
+# comes from the Secret fare-web-secret instead.
+data:
+  DJANGO_DEBUG: "false"
+  # The public hostname is added when the site gets one (deploy/README.md). localhost stays: the
+  # probes and the smoke check send Host: localhost.
+  DJANGO_ALLOWED_HOSTS: "localhost"
+  DJANGO_CSRF_TRUSTED_ORIGINS: ""
+  # Proxies in front of the pod that append X-Forwarded-For. With none, every client is the pod's
+  # peer address; set it along with the public route.
+  RATELIMIT_TRUSTED_FORWARDED_HOPS: "0"
+  FARE_RATE_LIMIT: "30"
+  LOG_FORMAT: "json"
+  LOG_LEVEL: "INFO"

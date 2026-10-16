@@ -33,6 +33,14 @@ package = false
 # from mxlei01/fast-feature-transform (private) for free-threaded CPython 3.14 on arm64
 # macOS; see README.md for rebuilding it.
 fast-inference = { path = "wheels/fast_inference-0.0.1.dev186+gac4dc4158-cp314-cp314t-macosx_27_0_arm64.whl" }
+# On Linux (the container image), torch's CPU-only build: the default Linux wheel brings about
+# 2.7 GB of CUDA wheels on arm64 that the site never uses.
+torch = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux'" }]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
 
 [tool.ty.environment]
 extra-paths = ["app"]

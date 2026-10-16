@@ -145,6 +145,9 @@ For example, locally without TLS:
 DJANGO_SECRET_KEY=... DJANGO_SSL_REDIRECT=false make serve
 ```
 
+The `Dockerfile` packages the site as an image. [deploy/README.md](deploy/README.md) covers the
+Kubernetes manifests, the ArgoCD flow, and what is still missing before the site can go live.
+
 ## Security
 
 Every value a client sends goes through one Django form (`app/fare/forms.py`), the page's and the
@@ -184,8 +187,8 @@ make all          # format, lint, type check, tests, bandit
 make pytest       # tests only: they train a small model on synthetic trips, no download
 ```
 
-CI runs ruff and bandit. The tests and the type check need the macOS-only wheel, so they run
-locally.
+CI runs ruff and bandit, and renders the Kubernetes manifests. The tests and the type check need the
+macOS-only wheel, so they run locally.
 
 ## Updating fast-inference
 

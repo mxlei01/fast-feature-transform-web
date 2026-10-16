@@ -1,0 +1,14 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+# The site, independent of environment: each overlay sets the namespace and pins the image.
+# The Secret fare-web-secret is not generated here; deploy/README.md says how to create it.
+resources:
+  - configmap.yaml
+  - deployment.yaml
+  - service.yaml
+# The smoke checks as a ConfigMap. Its name carries a hash of the script, so the staging Job runs
+# again whenever the checks change. Only the staging overlay mounts it.
+configMapGenerator:
+  - name: fare-web-smoke-script
+    files:
+      - smoke_check.py

@@ -1,0 +1,20 @@
+# Prod: applied once with `kubectl apply -f`, after which ArgoCD polls this repository and deploys
+# master, so merging a pull request is the promotion.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: fare-web
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/mxlei01/fast-feature-transform-web.git
+    targetRevision: master
+    path: deploy/manifests/overlays/prod
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: fare-web
+  syncPolicy:
+    automated: { prune: false, selfHeal: false }
+    syncOptions:
+      - CreateNamespace=true
