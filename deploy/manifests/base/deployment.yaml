@@ -1,0 +1,74 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fare-web
+  labels: { app: fare-web }
+spec:
+  # One pod with one process: the rate limit is counted per process, so a second pod would double
+  # every client's budget.
+  replicas: 1
+  revisionHistoryLimit: 2
+  selector:
+    matchLabels: { app: fare-web }
+  template:
+    metadata:
+      labels: { app: fare-web }
+    spec:
+      # The image is built on Apple silicon, so it runs only on arm64 nodes.
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - { key: kubernetes.io/arch, operator: In, values: [arm64] }
+      # The image's user; the image installs Python under /opt, where this user can read it.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: web
+          image: fare-web:dev
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          ports:
+            - { containerPort: 8000, name: http }
+          envFrom:
+            - configMapRef: { name: fare-web-config }
+            - secretRef: { name: fare-web-secret }
+          # The first /healthz loads torch and the model, which takes a while on a small node.
+          # Host: localhost is always allowed, and /healthz is exempt from the HTTPS redirect, so a
+          # plain-HTTP probe reaches the view.
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+              httpHeaders:
+                - { name: Host, value: localhost }
+            periodSeconds: 5
+            failureThreshold: 36
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+              httpHeaders:
+                - { name: Host, value: localhost }
+            periodSeconds: 15
+            failureThreshold: 4
+          livenessProbe:
+            tcpSocket: { port: http }
+            periodSeconds: 30
+          resources:
+            requests: { cpu: 200m, memory: 512Mi }
+            limits: { cpu: "1", memory: 1Gi }
+          volumeMounts:
+            # The root filesystem is read-only. Loading the model writes its per-stage pipelines
+            # under /tmp, and gunicorn keeps its worker heartbeat there.
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - name: tmp
+          emptyDir: { sizeLimit: 256Mi }

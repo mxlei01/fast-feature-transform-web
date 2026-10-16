@@ -21,3 +21,8 @@ data/
 # A training run writes here and swaps the result into artifacts/ only when it is complete.
 artifacts.staging/
 artifacts.old/
+# Editor-local settings.
+.nvim.lua
+nvim.log
+# Local Cloudflare tunnel notes; tunnel tokens never belong in this public repository.
+cloudflare_tunnel_connection.txt

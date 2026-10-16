@@ -1,0 +1,13 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+# Prod: master, in its own namespace. Merging to master is the promotion; there is no smoke Job.
+namespace: fare-web
+resources:
+  - ../../base
+# The image, pinned to the commit it was built from (`make pin` writes newTag). newName stays a
+# placeholder in git, because this repository is public; the live Application sets the registry
+# (deploy/README.md).
+images:
+  - name: fare-web
+    newName: registry.invalid/fare-web
+    newTag: "dev"

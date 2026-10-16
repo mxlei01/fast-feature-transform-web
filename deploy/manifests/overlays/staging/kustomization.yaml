@@ -1,0 +1,14 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+# Staging: the branch under review, in its own namespace, gated by the smoke Job.
+namespace: fare-web-staging
+resources:
+  - ../../base
+  - smoke-job.yaml
+# The image, pinned to the commit it was built from (`make pin` writes newTag). newName stays a
+# placeholder in git, because this repository is public; the live Application sets the registry
+# (deploy/README.md).
+images:
+  - name: fare-web
+    newName: registry.invalid/fare-web
+    newTag: "dev"

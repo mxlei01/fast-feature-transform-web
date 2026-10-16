@@ -1,4 +1,4 @@
-# CI: lint, format and security checks on every PR and master push.
+# CI: lint, format and security checks, and a render of the Kubernetes manifests, on every PR and master push.
 #
 # The tests and the type check need the vendored fast-inference wheel, which is built for
 # free-threaded CPython 3.14 on macOS 27 arm64 only, so they run locally with `make all` (see
@@ -30,10 +30,15 @@ jobs:
           version: "0.12.17"
 
       - name: Lint (ruff)
-        run: uvx ruff@0.17.0 check app training
+        run: uvx ruff@0.17.0 check app training deploy
 
       - name: Format check (ruff)
-        run: uvx ruff@0.17.0 format --check app training
+        run: uvx ruff@0.17.0 format --check app training deploy
 
       - name: Security check (bandit)
-        run: uvx --from "bandit[toml]==1.9.4" bandit -r -c pyproject.toml app training
+        run: uvx --from "bandit[toml]==1.9.4" bandit -r -c pyproject.toml app training deploy
+
+      - name: Render the Kubernetes manifests (kustomize)
+        run: |
+          kubectl kustomize deploy/manifests/overlays/staging > /dev/null
+          kubectl kustomize deploy/manifests/overlays/prod > /dev/null

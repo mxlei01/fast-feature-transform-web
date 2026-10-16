@@ -1,0 +1,50 @@
+# After every staging sync, ArgoCD runs the smoke checks against the staging Service. A non-zero
+# exit marks the sync failed, which is the signal not to merge. The script comes from the base's
+# ConfigMap generator, whose hashed name kustomize substitutes here.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: fare-web-smoke
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+spec:
+  backoffLimit: 1
+  activeDeadlineSeconds: 300
+  template:
+    metadata:
+      labels: { app: fare-web-smoke }
+    spec:
+      restartPolicy: Never
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - { key: kubernetes.io/arch, operator: In, values: [arm64] }
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: smoke
+          image: fare-web:dev
+          imagePullPolicy: IfNotPresent
+          command: ["python", "/smoke/smoke_check.py"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          env:
+            # The Service in this namespace; port 80 reaches the pod's 8000.
+            - { name: FARE_BASE_URL, value: "http://fare-web" }
+            - { name: PYTHONDONTWRITEBYTECODE, value: "1" }
+          volumeMounts:
+            - { name: smoke-script, mountPath: /smoke, readOnly: true }
+          resources:
+            requests: { cpu: 50m, memory: 64Mi }
+            limits: { cpu: 500m, memory: 128Mi }
+      volumes:
+        - name: smoke-script
+          configMap: { name: fare-web-smoke-script }

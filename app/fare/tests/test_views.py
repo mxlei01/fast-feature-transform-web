@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.template.defaultfilters import floatformat
 from django.test import Client
 from pytest_django.fixtures import Settings
@@ -170,6 +171,15 @@ def test_the_api_validates_values_like_the_form(client: Client) -> None:
     }
     huge: str = '{"pickup_zone": 161, "dropoff_zone": 236, "pickup_time": "2026-08-12T09:15", "trip_distance": 1e999}'
     assert _post_json(client, huge).status_code == 400
+
+
+def test_a_file_upload_is_refused_before_it_is_spooled() -> None:
+    # With a well-formed CSRF cookie the CSRF check reads the body to look for the token. The first
+    # file part must be refused there (400), not written to /tmp and then refused for its token (403).
+    client = Client(enforce_csrf_checks=True)
+    client.cookies["csrftoken"] = "a" * 32
+    upload = SimpleUploadedFile("big.bin", b"x" * 50_000)
+    assert client.post("/", data={"pickup_zone": "161", "file": upload}).status_code == 400
 
 
 def test_the_api_checks_type_size_and_method(client: Client) -> None:

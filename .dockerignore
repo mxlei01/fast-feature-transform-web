@@ -1,0 +1,13 @@
+# An allowlist: the image needs only these, and nothing else in the checkout (local notes, data,
+# credentials, caches) can reach the build context.
+*
+!pyproject.toml
+!uv.lock
+!.python-version
+!wheels/
+!app/
+!training/
+!artifacts/
+**/__pycache__
+**/tests
+**/*.pyc

@@ -109,6 +109,10 @@ WHITENOISE_USE_FINDERS: bool = True
 DATA_UPLOAD_MAX_MEMORY_SIZE: int = 4096
 DATA_UPLOAD_MAX_NUMBER_FIELDS: int = 16
 FILE_UPLOAD_MAX_MEMORY_SIZE: int = 0
+# The site takes no files. Refuse a file part before it is written: the 4 KB cap above does not count
+# file data, and the CSRF check reads the whole body, writing each file to /tmp, before it rejects a
+# request without a token.
+DATA_UPLOAD_MAX_NUMBER_FILES: int = 0
 
 SECURE_CONTENT_TYPE_NOSNIFF: bool = True
 SECURE_REFERRER_POLICY: str = "same-origin"
