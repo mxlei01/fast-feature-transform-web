@@ -6,3 +6,4 @@ kind: Kustomization
 # fare-web-cloudflared, holding the tunnel's token, is created by hand (deploy/README.md).
 resources:
   - deployment.yaml
+  - network-policy.yaml

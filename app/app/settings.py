@@ -77,9 +77,11 @@ MIDDLEWARE: list[str] = [
     "django.middleware.security.SecurityMiddleware",
     # Outside everything that can answer early, so those answers carry the headers too.
     "fare.security_headers.SecurityHeadersMiddleware",
+    # Before the guard, so a banned address still gets the stylesheet: Cloudflare caches .css by its
+    # extension, and would otherwise keep a banned address's 404 for it and serve that to everyone.
+    "whitenoise.middleware.WhiteNoiseMiddleware",
     # Before anything that does work: a scanner's request, and every request from its address, ends here.
     "fare.probe_guard.ProbeGuardMiddleware",
-    "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
@@ -134,7 +136,15 @@ if not DEBUG:
     SECURE_HSTS_PRELOAD: bool = _env_bool("DJANGO_HSTS_PRELOAD", False)
     CSRF_COOKIE_SECURE: bool = SECURE_SSL_REDIRECT
 
-CACHES: dict = {"default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache", "LOCATION": "fare"}}
+# The rate limit and the scanner ban. Django's default of 300 entries would let a few hundred
+# addresses push the bans out within a minute.
+CACHES: dict = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+        "LOCATION": "fare",
+        "OPTIONS": {"MAX_ENTRIES": 10_000},
+    }
+}
 
 FARE_ARTIFACTS_DIR: Path = Path(os.getenv("FARE_ARTIFACTS_DIR", str(REPO_DIR / "artifacts")))
 FARE_RATE_LIMIT: int = int(os.getenv("FARE_RATE_LIMIT", "30"))

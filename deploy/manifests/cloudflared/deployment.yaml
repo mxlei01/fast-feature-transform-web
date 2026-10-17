@@ -4,8 +4,9 @@ metadata:
   name: fare-web-cloudflared
   labels: { app: fare-web-cloudflared }
 spec:
-  # Two connectors on different nodes: Cloudflare spreads visitors over both, and one survives a
-  # node's restart. Scaling to 0 takes the public site down in seconds (deploy/README.md).
+  # Two connectors on different nodes, so one survives a node's restart. The second adds availability,
+  # not capacity: Cloudflare does not balance requests across a tunnel's connectors. Scaling to 0 takes
+  # the public site down in seconds (deploy/README.md).
   replicas: 2
   revisionHistoryLimit: 2
   selector:
@@ -14,6 +15,8 @@ spec:
     metadata:
       labels: { app: fare-web-cloudflared }
     spec:
+      # cloudflared never calls the Kubernetes API.
+      automountServiceAccountToken: false
       affinity:
         podAntiAffinity:
           requiredDuringSchedulingIgnoredDuringExecution:

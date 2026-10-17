@@ -1,4 +1,4 @@
-"""The tunnel's routing: edge blocks first for every hostname, the catch-all last, and a push that hides its token."""
+"""The tunnel's routing: path blocks first for every hostname, the catch-all last, and a push that hides its token."""
 
 import io
 import json
@@ -25,7 +25,7 @@ def _environment(monkeypatch: pytest.MonkeyPatch, token_file: Path, *argv: str) 
     monkeypatch.setattr(sys, "argv", ["tunnel_routing.py", *argv])
 
 
-def test_the_edge_blocks_come_first_and_the_catch_all_last() -> None:
+def test_the_path_blocks_come_first_and_the_catch_all_last() -> None:
     rules = tunnel_routing.ingress(PROD, STAGING)
     assert rules[:2] == [
         {"path": "^/healthz", "service": "http_status:404"},
@@ -84,3 +84,42 @@ def test_a_push_sends_the_routing_and_never_prints_the_token(
     printed = capsys.readouterr()
     assert "not-a-real-token-value" not in printed.out + printed.err
     assert "version 7" in printed.out
+
+
+def _refuse_any_push(monkeypatch: pytest.MonkeyPatch) -> None:
+    def urlopen(*args: object, **kwargs: object) -> None:
+        raise AssertionError("pushed")
+
+    monkeypatch.setattr(tunnel_routing.urllib.request, "urlopen", urlopen)
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        "not-a-real-token-value\n# a note\n",
+        "# the edit token\nnot-a-real-token-value\n",
+        "not-a-real-token-value\rnote",
+        'curl -H "Authorization: Bearer not-a-real-token-value"',
+    ],
+)
+def test_a_token_file_holding_more_than_the_token_is_refused_without_printing_it(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str], content: str
+) -> None:
+    token_file: Path = tmp_path / "token"
+    token_file.write_text(content)
+    _environment(monkeypatch, token_file)
+    _refuse_any_push(monkeypatch)
+    with pytest.raises(SystemExit) as refused:
+        tunnel_routing.main()
+    printed = capsys.readouterr()
+    assert "not-a-real-token-value" not in str(refused.value.code) + printed.out + printed.err
+
+
+@pytest.mark.parametrize("argument", ["--dryrun", "--dry_run", "-n", "--dry-run=1", "--help"])
+def test_a_mistyped_flag_or_help_never_pushes(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, argument: str) -> None:
+    token_file: Path = tmp_path / "token"
+    token_file.write_text("not-a-real-token-value\n")
+    _environment(monkeypatch, token_file, argument)
+    _refuse_any_push(monkeypatch)
+    with pytest.raises(SystemExit):
+        tunnel_routing.main()

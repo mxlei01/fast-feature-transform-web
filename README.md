@@ -168,13 +168,15 @@ API's alike:
   also set `nosniff`, a same-origin referrer policy and a Permissions Policy.
 - **CSRF:** the form needs Django's token (an HttpOnly, SameSite=Strict cookie). The API is
   stateless and has no cookie to ride on.
-- **Rate limits:** predictions are limited per client address. `X-Forwarded-For` is believed only
-  for the proxies you declare, and Cloudflare's `CF-Connecting-IP` only when you say the site is behind
-  Cloudflare.
-- **Scanners:** a request for a path only a vulnerability scanner would ask for (WordPress, PHP,
-  `.env`, `.git` and the like) gets a 404, and its sender's address is refused for an hour. A request a
-  browser sent from another site, or one from a private address, bans no one, so a hostile page cannot
-  get visitors banned and a proxy's own address is never banned.
+- **Rate limits:** predictions are limited per client address, and per /64 for IPv6. `X-Forwarded-For`
+  is believed only for the proxies you declare, and Cloudflare's `CF-Connecting-IP` only when you say
+  the site is behind Cloudflare.
+- **Scanners:** a request for a path only a vulnerability scanner would ask for (any `.php` URL,
+  WordPress, `.env`, `.git` and the others in `app/fare/probe_guard.py`) gets a 404, and its sender's
+  address is refused for an hour. Current browsers mark their requests with `Sec-Fetch-Site`, and those
+  ban no one, so a hostile page or a link in an email cannot get a visitor banned; older browsers send
+  no such header. A private address, such as the tunnel connector's, is never banned. Behind a proxy with
+  a public address, declare it as above, or one probe through it bans everyone behind it.
 - **No stored state:** there is no database, no session and no login.
 - **Failures** are logged with their traceback, and the client gets a fixed message.
 - **Model loading:** the weights load with `torch.load(..., weights_only=True)`, which reads
