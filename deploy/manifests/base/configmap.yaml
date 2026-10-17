@@ -16,7 +16,8 @@ data:
   RATELIMIT_TRUSTED_FORWARDED_HOPS: "0"
   # Public traffic arrives through the Cloudflare Tunnel, whose edge records the visitor in
   # CF-Connecting-IP; without it every visitor would share the connector's address. The NetworkPolicy
-  # lets only the connector and the smoke Job reach the pod, and any LAN Ingress must strip the header
+  # lets only the connector and the smoke Job reach the pod, besides the pod's own node (its processes
+  # and hostNetwork pods), which no policy blocks. Any LAN Ingress must strip the header
   # (fare-web-strip-cf-headers).
   RATELIMIT_TRUST_CF_HEADER: "true"
   FARE_RATE_LIMIT: "30"

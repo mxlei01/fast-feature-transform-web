@@ -14,7 +14,7 @@ still missing.
 | `manifests/overlays/staging/` | Namespace `fare-web-staging`, plus the PostSync Job that runs the smoke checks |
 | `manifests/overlays/prod/` | Namespace `fare-web`, plus the tunnel connector |
 | `manifests/cloudflared/` | The Cloudflare Tunnel connector and its NetworkPolicy: two replicas, included by prod only, since one tunnel serves both hostnames |
-| `cloudflared/tunnel_routing.py` | The tunnel's routing, pushed to Cloudflare with `make tunnel-routing` |
+| `cloudflared/tunnel_routing.py` | The tunnel's routing, pushed to Cloudflare with `make tunnel-routing ARGS=--push` |
 | `argocd/` | The two ArgoCD Applications, applied once |
 
 The pod runs one replica, because the rate limit is counted per process. It runs as a non-root
@@ -42,10 +42,10 @@ loaded; the pod requests 512Mi and is limited to 1Gi.
 4. Right after applying them, give the live Applications the registry (see "Before the first image"
    below). Until then their pods cannot pull the image.
 5. The tunnel. Copy its token from Cloudflare's dashboard (the `eyJ…` string in the tunnel's connector
-   install command) and store it as a Secret in the prod namespace, without writing it to a file:
+   install command) and store it as a Secret in the prod namespace, without writing it to a file. Run
+   `read -rs TOKEN` by itself, paste the token and press Enter (nothing is echoed), then:
 
    ```sh
-   read -rs TOKEN   # paste the token and press Enter; nothing is echoed
    printf %s "$TOKEN" | kubectl -n fare-web create secret generic fare-web-cloudflared --from-file=token=/dev/stdin
    unset TOKEN
    ```
@@ -53,14 +53,15 @@ loaded; the pod requests 512Mi and is limited to 1Gi.
    Point each hostname at the tunnel with a proxied CNAME to `<tunnel ID>.cfargotunnel.com`, added on the
    DNS records page of `fast-feature-transform.dev`; the tunnel's ID is on its page in the dashboard. Do
    not use `cloudflared tunnel route dns`, which writes into the zone its `~/.cloudflared/cert.pem` was
-   issued for, whatever the hostname. Then push the routing, and check that the connector answers:
+   issued for, whatever the hostname. Then push the routing, and check that the connector answers
+   `/healthz` with a 404:
 
    ```sh
-   CF_ACCOUNT_ID=… CF_TUNNEL_ID=… FARE_HOST=<prod hostname> FARE_STAGING_HOST=<staging hostname> make tunnel-routing
-   curl -sI https://<prod hostname>/healthz   # 404, from the connector
+   CF_ACCOUNT_ID=… CF_TUNNEL_ID=… FARE_HOST=<prod hostname> FARE_STAGING_HOST=<staging hostname> make tunnel-routing ARGS=--push
+   curl -sI https://<prod hostname>/healthz
    ```
 
-   `make tunnel-routing` reads an API token with Account, Cloudflare Tunnel, Edit from
+   The push reads an API token with Account, Cloudflare Tunnel, Edit from
    `~/.config/cloudflare/edit-token` (or `CF_TOKEN_FILE`). Keep it outside the repository, which may sit in
    a synced folder, and give it an expiry date: it can read the token of every tunnel in the account.
 
@@ -93,15 +94,17 @@ site's Service: prod's in `fare-web`, staging's across namespaces in `fare-web-s
 
 - **Routing.** The tunnel was created in Cloudflare's dashboard, so Cloudflare stores its routing and sends
   it to the connector, which needs only its token. The routing is written down in
-  `cloudflared/tunnel_routing.py`; edit it there and push it with `make tunnel-routing` (`ARGS=--dry-run`
-  prints it). Its first two rules have the connector answer `/healthz` and `/admin` with a 404 for every
-  hostname, so those requests never reach the site's pods. Only a WAF rule on the zone would stop them at
-  the edge.
+  `cloudflared/tunnel_routing.py`; edit it there, check it with `make tunnel-routing`, which only prints
+  it, and push it with `make tunnel-routing ARGS=--push`. Its first two rules have the connector answer
+  `/healthz` and `/admin` with a 404 for every hostname, so those requests never reach the site's pods.
+  Only a WAF rule on the zone would stop them at the edge.
 - **The visitor's address.** The edge records it in `CF-Connecting-IP`, overwriting any value the visitor
   sent, and the site keys the rate limit, the request log and the scanner ban on it
   (`RATELIMIT_TRUST_CF_HEADER`). The limit and the ban treat an IPv6 visitor's whole /64 as one. The
-  NetworkPolicies let only the connector and the smoke Job reach the site's pods, so no other pod can set
-  the header, and any LAN Ingress must use the `fare-web-strip-cf-headers` middleware.
+  NetworkPolicies let only the connector and the smoke Job reach the site's pods over the pod network, so
+  no other pod there can set the header. No policy can block a pod's own node, so a process or a
+  hostNetwork pod (a node exporter, say) on that node still can. Any LAN Ingress must use the
+  `fare-web-strip-cf-headers` middleware.
 - **Scanners.** A request for a path only a scanner would ask for (any `.php` URL, WordPress, `.env`,
   `.git` and the others in `app/fare/probe_guard.py`) gets a 404, and its sender is refused for an hour
   (`PROBE_BAN_SECONDS`), static files aside. The ban lives in the pod; lasting, cross-address blocks
@@ -121,14 +124,15 @@ site's Service: prod's in `fare-web`, staging's across namespaces in `fare-web-s
 - Each hostname in its overlay's `fare-web-config`: in `DJANGO_ALLOWED_HOSTS`, and as `https://<hostname>`
   in `DJANGO_CSRF_TRUSTED_ORIGINS`. Keep `localhost` in the list for the probes and the smoke check.
 - The zone's own bot and security settings at Cloudflare, which live in its dashboard, not here. Among
-  them, a WAF custom rule that blocks `/healthz`, `/admin` and the scanner paths at the edge.
+  them, a WAF custom rule that blocks `/healthz`, `/admin` and the scanner paths at the edge, and URL
+  normalization's "Normalize URLs to origin", so the site receives the path Cloudflare caches under.
 
 ### Ingress and TLS
 
-- There is no Ingress, so the site is reachable only through the tunnel. A LAN Ingress (traefik, with a
-  certificate from the cluster's internal CA) would give it an internal hostname. It would need a rule
-  for traefik in `manifests/base/network-policy.yaml`, and must use the `fare-web-strip-cf-headers`
-  middleware, since the site trusts `CF-Connecting-IP`.
+- There is no Ingress, so apart from its own node and `kubectl port-forward`, the site is reachable only
+  through the tunnel. A LAN Ingress (traefik, with a certificate from the cluster's internal CA) would
+  give it an internal hostname. It would need a rule for traefik in `manifests/base/network-policy.yaml`,
+  and must use the `fare-web-strip-cf-headers` middleware, since the site trusts `CF-Connecting-IP`.
 - Public TLS ends at Cloudflare's edge. Browsers require HTTPS on every `.dev` name, which the edge
   certificate satisfies.
 

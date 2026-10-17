@@ -92,7 +92,8 @@ def test_an_ipv6_ban_covers_the_senders_slash_64(client: Client, settings: Setti
 
 
 def test_a_banned_address_still_gets_the_stylesheet(client: Client) -> None:
-    # Cloudflare caches .css by extension under the URL alone, so a 404 here would reach every visitor.
+    # The guard's 404s are no-store, but under a cache rule that ignores that header, Cloudflare would keep a
+    # 404 here by the .css extension under the URL alone and serve it to every visitor.
     client.get("/wp-login.php", REMOTE_ADDR=SCANNER)
     stylesheet = client.get("/static/fare/app.css", REMOTE_ADDR=SCANNER)
     stylesheet.close()  # WhiteNoise hands back an open file
@@ -118,3 +119,11 @@ def test_the_ban_lasts_probe_ban_seconds(client: Client, settings: Settings, mon
     )
     client.get("/phpmyadmin/", REMOTE_ADDR=SCANNER)
     assert calls == [(f"probe-ban:{SCANNER}", True, 120)]
+
+
+def test_a_ban_outlasts_a_few_hundred_other_addresses(client: Client) -> None:
+    # Django's cache keeps 300 entries by default, and makes room by dropping the least recently used.
+    client.get("/.env", REMOTE_ADDR=SCANNER)
+    for number in range(400):
+        client.get("/.env", REMOTE_ADDR=f"8.8.{number // 200}.{number % 200 + 1}")
+    assert client.get("/", REMOTE_ADDR=SCANNER).status_code == 404

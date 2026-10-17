@@ -173,10 +173,11 @@ API's alike:
   the site is behind Cloudflare.
 - **Scanners:** a request for a path only a vulnerability scanner would ask for (any `.php` URL,
   WordPress, `.env`, `.git` and the others in `app/fare/probe_guard.py`) gets a 404, and its sender's
-  address is refused for an hour. Current browsers mark their requests with `Sec-Fetch-Site`, and those
-  ban no one, so a hostile page or a link in an email cannot get a visitor banned; older browsers send
-  no such header. A private address, such as the tunnel connector's, is never banned. Behind a proxy with
-  a public address, declare it as above, or one probe through it bans everyone behind it.
+  address (for IPv6, its whole /64) is refused for an hour. Current browsers mark their requests with
+  `Sec-Fetch-Site`, and those ban no one, so a hostile page or a link in an email cannot get a visitor
+  banned; older browsers send no such header. A private address, such as the tunnel connector's, is
+  never banned. Behind a proxy with a public address, declare it as above, or one probe through it bans
+  everyone behind it.
 - **No stored state:** there is no database, no session and no login.
 - **Failures** are logged with their traceback, and the client gets a fixed message.
 - **Model loading:** the weights load with `torch.load(..., weights_only=True)`, which reads

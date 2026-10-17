@@ -2,8 +2,9 @@
 
 The tunnel was created in Cloudflare's dashboard, so Cloudflare stores its routing and sends it to the
 connector in the cluster, which needs only the tunnel's token. This file is where that routing is written
-down: change it here, then push it with ``make tunnel-routing``. A push replaces the tunnel's whole
-configuration, including anything set in the dashboard.
+down: change it here, check it with ``make tunnel-routing``, which only prints it, then push it with
+``make tunnel-routing ARGS=--push``. A push replaces the tunnel's whole configuration, including anything
+set in the dashboard.
 
 The connector matches each request against the rules top to bottom. The two hostname-less rules come
 first, so for every public hostname, present or future, the connector itself answers ``/healthz``
@@ -11,9 +12,9 @@ first, so for every public hostname, present or future, the connector itself ans
 Such a request still crosses the tunnel but never reaches the site's pods; stopping it at Cloudflare's
 edge takes a WAF rule on the zone.
 
-    CF_ACCOUNT_ID=... CF_TUNNEL_ID=... FARE_HOST=... FARE_STAGING_HOST=... make tunnel-routing
+    CF_ACCOUNT_ID=... CF_TUNNEL_ID=... FARE_HOST=... FARE_STAGING_HOST=... make tunnel-routing ARGS=--push
 
-``make tunnel-routing ARGS=--dry-run`` prints the routing without pushing it.
+Only ``--push`` pushes, so a mistyped flag or make variable cannot.
 
 Environment:
     CF_ACCOUNT_ID: The Cloudflare account's ID.
@@ -83,7 +84,7 @@ def _require(name: str, pattern: re.Pattern[str]) -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Build the routing from the environment, print it, and push it unless ``--dry-run`` is given.
+    """Build the routing from the environment, print it, and push it only when ``--push`` is given.
 
     Args:
         argv: The arguments, without the program's name; the process's own when None.
@@ -93,16 +94,16 @@ def main(argv: list[str] | None = None) -> int:
 
     """
     # An unknown or mistyped flag exits here, before anything is read or pushed.
-    parser = argparse.ArgumentParser(description="Push the tunnel's routing to Cloudflare.")
-    parser.add_argument("--dry-run", action="store_true", help="print the routing without pushing it")
-    dry_run: bool = parser.parse_args(argv).dry_run
+    parser = argparse.ArgumentParser(description="Print the tunnel's routing; --push sends it to Cloudflare.")
+    parser.add_argument("--push", action="store_true", help="replace the tunnel's live routing with this one")
+    push: bool = parser.parse_args(argv).push
     prod_host: str = _require("FARE_HOST", HOSTNAME)
     staging_host: str = _require("FARE_STAGING_HOST", HOSTNAME)
     if prod_host == staging_host:
         sys.exit("FARE_HOST and FARE_STAGING_HOST must differ")
     body: dict[str, Any] = {"config": {"ingress": ingress(prod_host, staging_host)}}
     print(json.dumps(body, indent=2))
-    if dry_run:
+    if not push:
         return 0
     account: str = _require("CF_ACCOUNT_ID", HEX_ID)
     tunnel: str = _require("CF_TUNNEL_ID", UUID)

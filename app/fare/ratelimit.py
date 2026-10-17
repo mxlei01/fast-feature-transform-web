@@ -75,8 +75,10 @@ def client_ip(request: HttpRequest) -> str:
 def client_key(address: str) -> str:
     """Return what a client's budget and ban are kept under: an IPv4 address, or an IPv6 address's /64.
 
-    An IPv6 home or server holds a whole /64 and can send each request from a new address in it, so
-    counting per address would set no limit. A /64 is one household or one machine, as one IPv4 address is.
+    An IPv6 host can send each request from a new address in its /64, so counting per address would set
+    no limit. A /64 is one network: often one home, phone or server, as one IPv4 address often is. A home
+    given a /56 holds 256 of them and can move between them, and a shared network puts many people in
+    one /64, as NAT does behind one IPv4 address.
 
     Args:
         address: The address ``client_ip`` returned.

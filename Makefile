@@ -58,8 +58,8 @@ manifests:
 # make smoke SMOKE_URL=http://host:port
 smoke:
 	FARE_BASE_URL=$(SMOKE_URL) uv run python deploy/manifests/base/smoke_check.py
-# Push the tunnel's routing to Cloudflare (deploy/cloudflared/tunnel_routing.py says what it needs);
-# make tunnel-routing ARGS=--dry-run prints it without pushing.
+# Print the tunnel's routing (deploy/cloudflared/tunnel_routing.py says what it needs);
+# make tunnel-routing ARGS=--push pushes it to Cloudflare.
 tunnel-routing:
 	uv run python deploy/cloudflared/tunnel_routing.py $(ARGS)
 

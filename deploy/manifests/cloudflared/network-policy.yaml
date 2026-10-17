@@ -1,8 +1,9 @@
-# The connector accepts no connections. Cloudflare's edge reaches it over the connector's own outbound
-# ones, and the kubelet's /ready probe comes from the pod's own node, which no policy blocks. That also
-# closes the metrics port, 2000, whose server has cloudflared's debug and configuration pages.
-# Its egress is only what it needs, so update checks (--no-autoupdate is set) and cloudflared's
-# DNS-over-TLS fallback to 1.1.1.1 are dropped.
+# The connector accepts no connections from other pods, which closes its metrics port, 2000, whose server
+# has cloudflared's debug and configuration pages. Cloudflare's edge reaches it over the connector's own
+# outbound connections. The pod's own node, which no policy blocks, still reaches that port: the kubelet's
+# /ready probe, and any process or hostNetwork pod on that node.
+# Its egress is only what it needs, so update checks (--no-autoupdate is set), the start-up pre-check's
+# dial to api.cloudflare.com:443 and cloudflared's DNS-over-TLS fallback to 1.1.1.1 are dropped.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -13,9 +14,9 @@ spec:
     matchLabels: { app: fare-web-cloudflared }
   policyTypes: [Ingress, Egress]
   egress:
-    # Cloudflare's tunnel edges, region1 and region2.v2.argotunnel.com, which cloudflared reaches over
-    # IPv4 by default: QUIC on UDP 7844, HTTP/2 on TCP 7844. Should Cloudflare move them, the connector
-    # stops connecting until the new ranges are added here.
+    # Cloudflare's tunnel edges, region1 and region2.v2.argotunnel.com, over IPv4, which the connector
+    # is held to by --edge-ip-version 4 (deployment.yaml): QUIC on UDP 7844, HTTP/2 on TCP 7844. Should
+    # Cloudflare move them, the connector stops connecting until the new ranges are added here.
     - to:
         - ipBlock: { cidr: 198.41.192.0/24 }
         - ipBlock: { cidr: 198.41.200.0/24 }

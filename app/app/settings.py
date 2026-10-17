@@ -77,8 +77,9 @@ MIDDLEWARE: list[str] = [
     "django.middleware.security.SecurityMiddleware",
     # Outside everything that can answer early, so those answers carry the headers too.
     "fare.security_headers.SecurityHeadersMiddleware",
-    # Before the guard, so a banned address still gets the stylesheet: Cloudflare caches .css by its
-    # extension, and would otherwise keep a banned address's 404 for it and serve that to everyone.
+    # Before the guard, so a banned address still gets the stylesheet. The guard's 404s are no-store, which
+    # keeps Cloudflare from caching them; this order covers the stylesheet even under a cache rule that
+    # ignores that header, where a banned address's 404 for it would be kept and served to everyone.
     "whitenoise.middleware.WhiteNoiseMiddleware",
     # Before anything that does work: a scanner's request, and every request from its address, ends here.
     "fare.probe_guard.ProbeGuardMiddleware",

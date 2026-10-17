@@ -222,6 +222,7 @@ def test_predictions_are_rate_limited_per_client(client: Client, settings: Setti
     assert limited.status_code == 429
     assert limited["Retry-After"] == "60"
     assert client.post("/", TRIP).status_code == 429
+    assert limited["Cache-Control"] == "no-store"
     # Another client has its own budget.
     assert _post_json(client, TRIP, REMOTE_ADDR="198.51.100.4").status_code == 200
 
@@ -235,3 +236,13 @@ def test_every_response_carries_the_security_headers(client: Client, method: str
     assert response["Permissions-Policy"].startswith("camera=()")
     assert response["X-Content-Type-Options"] == "nosniff"
     assert response["X-Frame-Options"] == "DENY"
+
+
+@pytest.mark.parametrize("path", ["/nowhere", "/missing.css", "/static/fare/./app.css", "/static/fare/../fare/app.css"])
+def test_no_error_can_be_cached(client: Client, path: str) -> None:
+    # Cloudflare keeps a 404 with no Cache-Control under a .css URL, and may file the dot-segment spellings,
+    # which reach the site unchanged and get a 404, under the stylesheet's own URL.
+    response = client.get(path)
+    assert response.status_code == 404
+    assert response["Cache-Control"] == "no-store"
+    assert "Cache-Control" not in client.get("/")

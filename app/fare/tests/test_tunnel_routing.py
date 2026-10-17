@@ -44,16 +44,16 @@ def test_the_path_blocks_come_first_and_the_catch_all_last() -> None:
 def test_a_malformed_or_repeated_hostname_is_refused(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, hostname: str
 ) -> None:
-    _environment(monkeypatch, tmp_path / "missing", "--dry-run")
+    _environment(monkeypatch, tmp_path / "missing")
     monkeypatch.setenv("FARE_HOST", hostname)
     with pytest.raises(SystemExit):
         tunnel_routing.main()
 
 
-def test_a_dry_run_prints_the_routing_without_reading_the_token(
+def test_without_push_it_prints_the_routing_without_reading_the_token(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    _environment(monkeypatch, tmp_path / "missing", "--dry-run")
+    _environment(monkeypatch, tmp_path / "missing")
     assert tunnel_routing.main() == 0
     assert json.loads(capsys.readouterr().out) == {"config": {"ingress": tunnel_routing.ingress(PROD, STAGING)}}
 
@@ -63,7 +63,7 @@ def test_a_push_sends_the_routing_and_never_prints_the_token(
 ) -> None:
     token_file: Path = tmp_path / "token"
     token_file.write_text("not-a-real-token-value\n")
-    _environment(monkeypatch, token_file)
+    _environment(monkeypatch, token_file, "--push")
     sent: dict[str, Any] = {}
 
     def urlopen(request: urllib.request.Request, timeout: float) -> io.BytesIO:
@@ -107,7 +107,7 @@ def test_a_token_file_holding_more_than_the_token_is_refused_without_printing_it
 ) -> None:
     token_file: Path = tmp_path / "token"
     token_file.write_text(content)
-    _environment(monkeypatch, token_file)
+    _environment(monkeypatch, token_file, "--push")
     _refuse_any_push(monkeypatch)
     with pytest.raises(SystemExit) as refused:
         tunnel_routing.main()
@@ -115,7 +115,7 @@ def test_a_token_file_holding_more_than_the_token_is_refused_without_printing_it
     assert "not-a-real-token-value" not in str(refused.value.code) + printed.out + printed.err
 
 
-@pytest.mark.parametrize("argument", ["--dryrun", "--dry_run", "-n", "--dry-run=1", "--help"])
+@pytest.mark.parametrize("argument", ["--psuh", "--push=1", "-p", "--dry-run", "--help"])
 def test_a_mistyped_flag_or_help_never_pushes(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, argument: str) -> None:
     token_file: Path = tmp_path / "token"
     token_file.write_text("not-a-real-token-value\n")
@@ -123,3 +123,9 @@ def test_a_mistyped_flag_or_help_never_pushes(monkeypatch: pytest.MonkeyPatch, t
     _refuse_any_push(monkeypatch)
     with pytest.raises(SystemExit):
         tunnel_routing.main()
+
+
+def test_the_token_file_defaults_to_a_place_outside_the_repository() -> None:
+    # git ignores .cf-token*, but a synced folder would still copy a token kept in the repository.
+    repository: Path = Path(tunnel_routing.__file__).resolve().parents[2]
+    assert not tunnel_routing.TOKEN_FILE.resolve().is_relative_to(repository)
