@@ -96,11 +96,15 @@ site's Service: prod's in `fare-web`, staging's across namespaces in `fare-web-s
   it to the connector, which needs only its token. The routing is written down in
   `cloudflared/tunnel_routing.py`; edit it there, check it with `make tunnel-routing`, which only prints
   it, and push it with `make tunnel-routing ARGS=--push`. Its first two rules have the connector answer
-  `/healthz` and `/admin` with a 404 for every hostname, so those requests never reach the site's pods.
-  Only a WAF rule on the zone would stop them at the edge.
+  `/healthz`, and any `/admin` path without a dot, with a 404 for every hostname, so those requests never
+  reach the site's pods. Only a WAF rule on the zone would stop them at the edge.
 - **The visitor's address.** The edge records it in `CF-Connecting-IP`, overwriting any value the visitor
   sent, and the site keys the rate limit, the request log and the scanner ban on it
-  (`RATELIMIT_TRUST_CF_HEADER`). The limit and the ban treat an IPv6 visitor's whole /64 as one. The
+  (`RATELIMIT_TRUST_CF_HEADER`). The limit and the ban treat an IPv6 visitor's whole /64 as one. Two zone
+  settings must stay at their default, off, because each takes the visitor's address out of the header:
+  the managed transform "Remove visitor IP headers", after which every visitor counts as a connector and
+  no one is banned, and Pseudo IPv4 set to "Overwrite Headers", which puts a made-up IPv4 address there for
+  each IPv6 visitor, and such an address is never banned ("Add Header" is harmless). The
   NetworkPolicies let only the connector and the smoke Job reach the site's pods over the pod network, so
   no other pod there can set the header. No policy can block a pod's own node, so a process or a
   hostNetwork pod (a node exporter, say) on that node still can. Any LAN Ingress must use the

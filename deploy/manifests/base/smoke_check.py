@@ -76,7 +76,10 @@ def wait_for_site() -> None:
     while time.monotonic() < deadline:
         try:
             fetch("/healthz")
-        except urllib.error.URLError:
+        except urllib.error.URLError as error:
+            # urllib raises every failure to connect as a URLError: a name that does not resolve, a timeout.
+            if not isinstance(error.reason, ConnectionRefusedError):
+                return
             time.sleep(2)
         except ValueError, OSError:
             return

@@ -8,9 +8,9 @@ set in the dashboard.
 
 The connector matches each request against the rules top to bottom. The two hostname-less rules come
 first, so for every public hostname, present or future, the connector itself answers ``/healthz``
-(uncached work meant for the cluster's probes) and ``/admin`` (which the site does not serve) with a 404.
-Such a request still crosses the tunnel but never reaches the site's pods; stopping it at Cloudflare's
-edge takes a WAF rule on the zone.
+(uncached work meant for the cluster's probes) and any ``/admin`` path without a dot (the site serves
+none) with a 404. Such a request still crosses the tunnel but never reaches the site's pods; stopping it
+at Cloudflare's edge takes a WAF rule on the zone.
 
     CF_ACCOUNT_ID=... CF_TUNNEL_ID=... FARE_HOST=... FARE_STAGING_HOST=... make tunnel-routing ARGS=--push
 
@@ -57,8 +57,13 @@ def ingress(prod_host: str, staging_host: str) -> list[dict[str, str]]:
 
     """
     return [
-        {"path": "^/healthz", "service": "http_status:404"},
-        {"path": "^/admin", "service": "http_status:404"},
+        # The connector's 404s carry no Cache-Control, and it matches the path as the visitor sent it, while
+        # Cloudflare's default URL normalization may file the answer under the path without its dot segments.
+        # A prefix rule would answer /admin/../static/fare/app.css, a 404 Cloudflare might then keep as the
+        # stylesheet. So /healthz is exact and /admin takes no dot; every other path reaches the site, whose
+        # 404s are no-store.
+        {"path": "^/healthz$", "service": "http_status:404"},
+        {"path": "^/admin(/[^.]*)?$", "service": "http_status:404"},
         # The connector runs in the prod namespace; staging's Service is reached across namespaces.
         {"hostname": prod_host, "service": "http://fare-web.fare-web.svc.cluster.local:80"},
         {"hostname": staging_host, "service": "http://fare-web.fare-web-staging.svc.cluster.local:80"},
@@ -93,8 +98,11 @@ def main(argv: list[str] | None = None) -> int:
         The exit status.
 
     """
-    # An unknown or mistyped flag exits here, before anything is read or pushed.
-    parser = argparse.ArgumentParser(description="Print the tunnel's routing; --push sends it to Cloudflare.")
+    # An unknown, mistyped or shortened flag exits here, before anything is read or pushed; argparse would
+    # otherwise take --pu for --push.
+    parser = argparse.ArgumentParser(
+        description="Print the tunnel's routing; --push sends it to Cloudflare.", allow_abbrev=False
+    )
     parser.add_argument("--push", action="store_true", help="replace the tunnel's live routing with this one")
     push: bool = parser.parse_args(argv).push
     prod_host: str = _require("FARE_HOST", HOSTNAME)

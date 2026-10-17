@@ -82,14 +82,19 @@ To reproduce a row, change the `distance` step in `training/features.py` or `TAR
 
 ```sh
 uv sync
-make run    # http://127.0.0.1:8000, DEBUG on
+make run
 ```
+
+`make run` serves the site at http://127.0.0.1:8000 with DEBUG on.
 
 ## Training
 
+`make train` downloads August 2026's trips, about 60 MB, into `data/` and trains on them;
+`make train MONTH=2026-07` uses another month.
+
 ```sh
-make train                  # August 2026, about 60 MB downloaded into data/
-make train MONTH=2026-07    # another month
+make train
+make train MONTH=2026-07
 ```
 
 `python -m training.train --help` lists the options (data directory, epoch limit, patience, batch
@@ -192,9 +197,12 @@ one JSON object; the plain format reads `POST /api/predict 200 3ms`. Training lo
 
 ## Development
 
+`make all` formats, lints, type-checks, tests and runs bandit; `make pytest` runs only the tests,
+which train a small model on synthetic trips with no download.
+
 ```sh
-make all          # format, lint, type check, tests, bandit
-make pytest       # tests only: they train a small model on synthetic trips, no download
+make all
+make pytest
 ```
 
 CI runs ruff and bandit, and renders the Kubernetes manifests. The tests and the type check need the

@@ -2,6 +2,7 @@
 
 import io
 import json
+import re
 import sys
 import urllib.request
 from pathlib import Path
@@ -28,14 +29,37 @@ def _environment(monkeypatch: pytest.MonkeyPatch, token_file: Path, *argv: str) 
 def test_the_path_blocks_come_first_and_the_catch_all_last() -> None:
     rules = tunnel_routing.ingress(PROD, STAGING)
     assert rules[:2] == [
-        {"path": "^/healthz", "service": "http_status:404"},
-        {"path": "^/admin", "service": "http_status:404"},
+        {"path": "^/healthz$", "service": "http_status:404"},
+        {"path": "^/admin(/[^.]*)?$", "service": "http_status:404"},
     ]
     assert rules[-1] == {"service": "http_status:404"}
     assert {rule["hostname"]: rule["service"] for rule in rules if "hostname" in rule} == {
         PROD: "http://fare-web.fare-web.svc.cluster.local:80",
         STAGING: "http://fare-web.fare-web-staging.svc.cluster.local:80",
     }
+
+
+@pytest.mark.parametrize(
+    ("path", "blocked"),
+    [
+        ("/healthz", True),
+        ("/admin", True),
+        ("/admin/", True),
+        ("/admin/login/", True),
+        ("/healthz/", False),
+        ("/healthz/../static/fare/app.css", False),
+        ("/admin/../static/fare/app.css", False),
+        ("/admin/x/../../static/fare/app.css", False),
+        ("/admin/x\\..\\..\\static\\fare\\app.css", False),
+        ("/static/fare/app.css", False),
+    ],
+)
+def test_the_path_blocks_answer_no_path_that_cloudflare_caches_elsewhere(path: str, blocked: bool) -> None:
+    # The connector's 404s carry no Cache-Control, and Cloudflare may cache under the normalized path, dot
+    # segments removed and backslashes made slashes, so no path rule may match a path that normalizes
+    # elsewhere. The connector searches the path it received, as re.search does.
+    rules = [rule["path"] for rule in tunnel_routing.ingress(PROD, STAGING) if "path" in rule]
+    assert any(re.search(rule, path) for rule in rules) is blocked
 
 
 @pytest.mark.parametrize(
@@ -115,7 +139,7 @@ def test_a_token_file_holding_more_than_the_token_is_refused_without_printing_it
     assert "not-a-real-token-value" not in str(refused.value.code) + printed.out + printed.err
 
 
-@pytest.mark.parametrize("argument", ["--psuh", "--push=1", "-p", "--dry-run", "--help"])
+@pytest.mark.parametrize("argument", ["--psuh", "--pu", "--push=1", "-p", "--dry-run", "--help"])
 def test_a_mistyped_flag_or_help_never_pushes(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, argument: str) -> None:
     token_file: Path = tmp_path / "token"
     token_file.write_text("not-a-real-token-value\n")
