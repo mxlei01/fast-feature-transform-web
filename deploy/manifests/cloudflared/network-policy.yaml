@@ -1,0 +1,48 @@
+# The connector accepts no connections from other pods, which closes its metrics port, 2000, whose server
+# has cloudflared's debug and configuration pages. Cloudflare's edge reaches it over the connector's own
+# outbound connections. The pod's own node, which no policy blocks, still reaches that port: the kubelet's
+# /ready probe, and any process or hostNetwork pod on that node.
+# Its egress is only what it needs, so update checks (--no-autoupdate is set), the start-up pre-check's
+# dial to api.cloudflare.com:443 and cloudflared's DNS-over-TLS fallback to 1.1.1.1 are dropped.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: fare-web-cloudflared
+  labels: { app: fare-web-cloudflared }
+spec:
+  podSelector:
+    matchLabels: { app: fare-web-cloudflared }
+  policyTypes: [Ingress, Egress]
+  egress:
+    # Cloudflare's tunnel edges, region1 and region2.v2.argotunnel.com, over IPv4, which the connector
+    # is held to by --edge-ip-version 4 (deployment.yaml): QUIC on UDP 7844, HTTP/2 on TCP 7844. Should
+    # Cloudflare move them, the connector stops connecting until the new ranges are added here.
+    - to:
+        - ipBlock: { cidr: 198.41.192.0/24 }
+        - ipBlock: { cidr: 198.41.200.0/24 }
+      ports:
+        - { protocol: UDP, port: 7844 }
+        - { protocol: TCP, port: 7844 }
+    # The site's pods in both namespaces (deploy/cloudflared/tunnel_routing.py), on the pod's port: the
+    # policy sees the traffic after the Service's port 80 has been translated to 8000.
+    - to:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: fare-web }
+          podSelector:
+            matchLabels: { app: fare-web }
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: fare-web-staging }
+          podSelector:
+            matchLabels: { app: fare-web }
+      ports:
+        - { protocol: TCP, port: 8000 }
+    # The cluster's DNS, to find Cloudflare's edges (an SRV lookup, then their addresses) and to resolve
+    # the site's Service names.
+    - to:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: kube-system }
+          podSelector:
+            matchLabels: { k8s-app: kube-dns }
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }

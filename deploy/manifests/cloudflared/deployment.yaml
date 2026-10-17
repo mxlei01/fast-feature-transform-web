@@ -1,0 +1,57 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fare-web-cloudflared
+  labels: { app: fare-web-cloudflared }
+spec:
+  # Two connectors on different nodes, so one survives a node's restart. The second adds availability,
+  # not capacity: Cloudflare does not balance requests across a tunnel's connectors. Scaling to 0 takes
+  # the public site down in seconds (deploy/README.md).
+  replicas: 2
+  revisionHistoryLimit: 2
+  selector:
+    matchLabels: { app: fare-web-cloudflared }
+  template:
+    metadata:
+      labels: { app: fare-web-cloudflared }
+    spec:
+      # cloudflared never calls the Kubernetes API.
+      automountServiceAccountToken: false
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels: { app: fare-web-cloudflared }
+              topologyKey: kubernetes.io/hostname
+      # The image's own non-root user.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: cloudflared
+          image: cloudflare/cloudflared:2026.9.1
+          imagePullPolicy: IfNotPresent
+          # The tunnel takes its routing from Cloudflare, so the token is all it needs. The metrics
+          # server answers the readiness probe at /ready once the connector holds a connection.
+          # --edge-ip-version 4 keeps it on the IPv4 edges its NetworkPolicy allows; cloudflared's own
+          # default, auto, would use whichever family DNS lists first.
+          args: ["tunnel", "--no-autoupdate", "--edge-ip-version", "4", "--metrics", "0.0.0.0:2000", "run"]
+          env:
+            - name: TUNNEL_TOKEN
+              valueFrom:
+                secretKeyRef: { name: fare-web-cloudflared, key: token }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          ports:
+            - { containerPort: 2000, name: metrics }
+          readinessProbe:
+            httpGet: { path: /ready, port: metrics }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests: { cpu: 20m, memory: 48Mi }
+            limits: { memory: 128Mi }

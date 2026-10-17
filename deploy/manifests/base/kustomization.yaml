@@ -5,7 +5,9 @@ kind: Kustomization
 resources:
   - configmap.yaml
   - deployment.yaml
+  - network-policy.yaml
   - service.yaml
+  - strip-cf-headers.yaml
 # The smoke checks as a ConfigMap. Its name carries a hash of the script, so the staging Job runs
 # again whenever the checks change. Only the staging overlay mounts it.
 configMapGenerator:

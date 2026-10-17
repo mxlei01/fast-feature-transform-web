@@ -1,0 +1,9 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+# The Cloudflare Tunnel connector, included by the prod overlay only: one tunnel serves both public
+# hostnames, and connectors in both namespaces would run two sets against the same tunnel. Its routing
+# lives at Cloudflare and is pushed from deploy/cloudflared/tunnel_routing.py. The Secret
+# fare-web-cloudflared, holding the tunnel's token, is created by hand (deploy/README.md).
+resources:
+  - deployment.yaml
+  - network-policy.yaml

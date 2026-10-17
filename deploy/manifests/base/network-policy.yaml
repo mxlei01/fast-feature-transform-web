@@ -1,0 +1,26 @@
+# Only the tunnel connector and the smoke Job may connect to the site, plus the pod's own node (the
+# kubelet's probes, and any process or hostNetwork pod there), which no policy blocks. The site trusts
+# CF-Connecting-IP (RATELIMIT_TRUST_CF_HEADER), so any other pod that could reach it could choose its own
+# address. A LAN Ingress would need a rule here for traefik, and must strip that header
+# (strip-cf-headers.yaml).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: fare-web
+  labels: { app: fare-web }
+spec:
+  podSelector:
+    matchLabels: { app: fare-web }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        # The connector runs only in the prod namespace, and serves staging too.
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: fare-web }
+          podSelector:
+            matchLabels: { app: fare-web-cloudflared }
+        # Staging's smoke Job, in the same namespace.
+        - podSelector:
+            matchLabels: { app: fare-web-smoke }
+      ports:
+        - { protocol: TCP, port: 8000 }

@@ -10,12 +10,14 @@ non-zero exit marks the sync failed. It needs nothing beyond the site's own imag
 Environment:
     FARE_BASE_URL: The site's base URL (required).
     SMOKE_TIMEOUT: Seconds allowed per request (default 30).
+    SMOKE_WAIT: Seconds to wait for the site to accept a connection before checking (default 30).
 """
 
 import json
 import math
 import os
 import sys
+import time
 import urllib.error
 import urllib.request
 from collections.abc import Callable
@@ -23,6 +25,7 @@ from typing import Any
 
 BASE_URL: str = os.environ.get("FARE_BASE_URL", "").rstrip("/")
 TIMEOUT: int = int(os.environ.get("SMOKE_TIMEOUT", "30"))
+WAIT: int = int(os.environ.get("SMOKE_WAIT", "30"))
 
 # A trip the committed model knows: Midtown Center to Upper East Side North on a weekday morning.
 TRIP: dict[str, Any] = {
@@ -59,6 +62,29 @@ def fetch(path: str, body: dict[str, Any] | None = None) -> tuple[int, bytes]:
             return response.status, response.read()
     except urllib.error.HTTPError as error:
         return error.code, error.read()
+
+
+def wait_for_site() -> None:
+    """Wait up to ``SMOKE_WAIT`` seconds for the site to accept a connection.
+
+    The cluster adds a new pod's address to the site's NetworkPolicy a few seconds after the pod starts
+    and refuses its connections until then, so the Job's first requests can be refused although the site
+    is fine. Only a refused connection is retried; any answer, or any other error, ends the wait, and the
+    checks then judge it.
+    """
+    deadline: float = time.monotonic() + WAIT
+    while time.monotonic() < deadline:
+        try:
+            fetch("/healthz")
+        except urllib.error.URLError as error:
+            # urllib raises every failure to connect as a URLError: a name that does not resolve, a timeout.
+            if not isinstance(error.reason, ConnectionRefusedError):
+                return
+            time.sleep(2)
+        except ValueError, OSError:
+            return
+        else:
+            return
 
 
 def check_health() -> None:
@@ -110,6 +136,7 @@ def main() -> int:
     if not BASE_URL:
         print("set FARE_BASE_URL", file=sys.stderr)
         return 1
+    wait_for_site()
     failed: int = 0
     for name, check in CHECKS:
         try:

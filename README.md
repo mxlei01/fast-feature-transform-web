@@ -82,14 +82,19 @@ To reproduce a row, change the `distance` step in `training/features.py` or `TAR
 
 ```sh
 uv sync
-make run    # http://127.0.0.1:8000, DEBUG on
+make run
 ```
+
+`make run` serves the site at http://127.0.0.1:8000 with DEBUG on.
 
 ## Training
 
+`make train` downloads August 2026's trips, about 60 MB, into `data/` and trains on them;
+`make train MONTH=2026-07` uses another month.
+
 ```sh
-make train                  # August 2026, about 60 MB downloaded into data/
-make train MONTH=2026-07    # another month
+make train
+make train MONTH=2026-07
 ```
 
 `python -m training.train --help` lists the options (data directory, epoch limit, patience, batch
@@ -134,6 +139,8 @@ rate-limit budget per client, with eight threads that run in parallel on free-th
 | `DJANGO_CSRF_TRUSTED_ORIGINS` | the site's origin, such as `https://fare.example.com`, behind a proxy |
 | `DJANGO_SSL_REDIRECT` | `false` when no TLS proxy is in front (default `true`) |
 | `RATELIMIT_TRUSTED_FORWARDED_HOPS` | how many proxies in front append `X-Forwarded-For` (default 0) |
+| `RATELIMIT_TRUST_CF_HEADER` | `true` behind Cloudflare: take the client's address from `CF-Connecting-IP` (default `false`) |
+| `PROBE_BAN_SECONDS` | how long an address that asked for a scanner's path is refused (default 3600) |
 | `FARE_ARTIFACTS_DIR` | another trained model (default `artifacts/`) |
 | `FARE_RATE_LIMIT` | predictions per client per minute (default 30), counted per server process |
 | `DJANGO_HSTS_SECONDS`, `DJANGO_HSTS_SUBDOMAINS`, `DJANGO_HSTS_PRELOAD` | HSTS over HTTPS (one year; off; off) |
@@ -166,8 +173,16 @@ API's alike:
   also set `nosniff`, a same-origin referrer policy and a Permissions Policy.
 - **CSRF:** the form needs Django's token (an HttpOnly, SameSite=Strict cookie). The API is
   stateless and has no cookie to ride on.
-- **Rate limits:** predictions are limited per client address. `X-Forwarded-For` is believed only
-  for the proxies you declare.
+- **Rate limits:** predictions are limited per client address, and per /64 for IPv6. `X-Forwarded-For`
+  is believed only for the proxies you declare, and Cloudflare's `CF-Connecting-IP` only when you say
+  the site is behind Cloudflare.
+- **Scanners:** a request for a path only a vulnerability scanner would ask for (any `.php` URL,
+  WordPress, `.env`, `.git` and the others in `app/fare/probe_guard.py`) gets a 404, and its sender's
+  address (for IPv6, its whole /64) is refused for an hour. Current browsers mark their requests with
+  `Sec-Fetch-Site`, and those ban no one, so a hostile page or a link in an email cannot get a visitor
+  banned; older browsers send no such header. A private address, such as the tunnel connector's, is
+  never banned. Behind a proxy with a public address, declare it as above, or one probe through it bans
+  everyone behind it.
 - **No stored state:** there is no database, no session and no login.
 - **Failures** are logged with their traceback, and the client gets a fixed message.
 - **Model loading:** the weights load with `torch.load(..., weights_only=True)`, which reads
@@ -182,9 +197,12 @@ one JSON object; the plain format reads `POST /api/predict 200 3ms`. Training lo
 
 ## Development
 
+`make all` formats, lints, type-checks, tests and runs bandit; `make pytest` runs only the tests,
+which train a small model on synthetic trips with no download.
+
 ```sh
-make all          # format, lint, type check, tests, bandit
-make pytest       # tests only: they train a small model on synthetic trips, no download
+make all
+make pytest
 ```
 
 CI runs ruff and bandit, and renders the Kubernetes manifests. The tests and the type check need the
