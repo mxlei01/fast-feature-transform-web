@@ -1,0 +1,13 @@
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: fare-web-strip-cf-headers
+  labels: { app: fare-web }
+# For any LAN Ingress in front of the site. The site trusts CF-Connecting-IP for the visitor's address
+# (RATELIMIT_TRUST_CF_HEADER), and only tunnel traffic, which never passes through traefik, should carry
+# it. A LAN client could otherwise set it and dodge the rate limit or the scanner ban. An empty value
+# in customRequestHeaders makes traefik remove the header.
+spec:
+  headers:
+    customRequestHeaders:
+      CF-Connecting-IP: ""

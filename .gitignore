@@ -26,3 +26,8 @@ artifacts.old/
 nvim.log
 # Local Cloudflare tunnel notes; tunnel tokens never belong in this public repository.
 cloudflare_tunnel_connection.txt
+# Cloudflare API tokens, keys and package-index credentials.
+.cf-token*
+*.pem
+*.key
+.pypirc

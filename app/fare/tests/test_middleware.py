@@ -48,6 +48,19 @@ def test_forwarded_addresses_count_only_with_trusted_proxies(settings: Settings)
     assert client_ip(garbage) == "10.0.0.2"
 
 
+def test_cloudflares_header_counts_only_when_trusted_and_valid(settings: Settings) -> None:
+    tunneled = RF.get("/", REMOTE_ADDR="10.42.0.7", HTTP_CF_CONNECTING_IP="198.51.100.9")
+    settings.RATELIMIT_TRUST_CF_HEADER = False
+    assert client_ip(tunneled) == "10.42.0.7"  # untrusted, the header is just the client's claim
+    settings.RATELIMIT_TRUST_CF_HEADER = True
+    assert client_ip(tunneled) == "198.51.100.9"  # the visitor, as Cloudflare's edge recorded it
+    garbage = RF.get("/", REMOTE_ADDR="10.42.0.7", HTTP_CF_CONNECTING_IP="not-an-ip\nforged")
+    assert client_ip(garbage) == "10.42.0.7"
+    settings.RATELIMIT_TRUSTED_FORWARDED_HOPS = 1
+    both = RF.get("/", REMOTE_ADDR="10.42.0.7", HTTP_CF_CONNECTING_IP="198.51.100.9", HTTP_X_FORWARDED_FOR="1.2.3.4")
+    assert client_ip(both) == "198.51.100.9"  # the edge's record wins over a forwarded list
+
+
 def test_control_characters_cannot_forge_a_log_line(caplog: pytest.LogCaptureFixture) -> None:
     request = RF.get("/", HTTP_USER_AGENT="agent\nforged")
     # A server percent-decodes %0d%0a into the path; RequestFactory would strip them from a URL.

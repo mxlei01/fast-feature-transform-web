@@ -134,6 +134,8 @@ rate-limit budget per client, with eight threads that run in parallel on free-th
 | `DJANGO_CSRF_TRUSTED_ORIGINS` | the site's origin, such as `https://fare.example.com`, behind a proxy |
 | `DJANGO_SSL_REDIRECT` | `false` when no TLS proxy is in front (default `true`) |
 | `RATELIMIT_TRUSTED_FORWARDED_HOPS` | how many proxies in front append `X-Forwarded-For` (default 0) |
+| `RATELIMIT_TRUST_CF_HEADER` | `true` behind Cloudflare: take the client's address from `CF-Connecting-IP` (default `false`) |
+| `PROBE_BAN_SECONDS` | how long an address that asked for a scanner's path is refused (default 3600) |
 | `FARE_ARTIFACTS_DIR` | another trained model (default `artifacts/`) |
 | `FARE_RATE_LIMIT` | predictions per client per minute (default 30), counted per server process |
 | `DJANGO_HSTS_SECONDS`, `DJANGO_HSTS_SUBDOMAINS`, `DJANGO_HSTS_PRELOAD` | HSTS over HTTPS (one year; off; off) |
@@ -167,7 +169,12 @@ API's alike:
 - **CSRF:** the form needs Django's token (an HttpOnly, SameSite=Strict cookie). The API is
   stateless and has no cookie to ride on.
 - **Rate limits:** predictions are limited per client address. `X-Forwarded-For` is believed only
-  for the proxies you declare.
+  for the proxies you declare, and Cloudflare's `CF-Connecting-IP` only when you say the site is behind
+  Cloudflare.
+- **Scanners:** a request for a path only a vulnerability scanner would ask for (WordPress, PHP,
+  `.env`, `.git` and the like) gets a 404, and its sender's address is refused for an hour. A request a
+  browser sent from another site, or one from a private address, bans no one, so a hostile page cannot
+  get visitors banned and a proxy's own address is never banned.
 - **No stored state:** there is no database, no session and no login.
 - **Failures** are logged with their traceback, and the client gets a fixed message.
 - **Model loading:** the weights load with `torch.load(..., weights_only=True)`, which reads

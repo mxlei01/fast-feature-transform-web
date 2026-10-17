@@ -4,6 +4,8 @@ kind: Kustomization
 namespace: fare-web
 resources:
   - ../../base
+  # The tunnel connector, which serves staging's hostname too.
+  - ../../cloudflared
 # The image, pinned to the commit it was built from (`make pin` writes newTag). newName stays a
 # placeholder in git, because this repository is public; the live Application sets the registry
 # (deploy/README.md).

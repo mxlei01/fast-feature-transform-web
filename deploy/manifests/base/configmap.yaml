@@ -12,8 +12,12 @@ data:
   DJANGO_ALLOWED_HOSTS: "localhost"
   DJANGO_CSRF_TRUSTED_ORIGINS: ""
   # Proxies in front of the pod that append X-Forwarded-For. With none, every client is the pod's
-  # peer address; set it along with the public route.
+  # peer address.
   RATELIMIT_TRUSTED_FORWARDED_HOPS: "0"
+  # Public traffic arrives through the Cloudflare Tunnel, whose edge records the visitor in
+  # CF-Connecting-IP; without it every visitor would share the connector's address. Any LAN Ingress
+  # must strip the header (fare-web-strip-cf-headers).
+  RATELIMIT_TRUST_CF_HEADER: "true"
   FARE_RATE_LIMIT: "30"
   LOG_FORMAT: "json"
   LOG_LEVEL: "INFO"

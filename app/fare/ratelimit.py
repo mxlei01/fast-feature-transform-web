@@ -1,9 +1,12 @@
 """Who the client is, and a per-client fixed-window limit on how often it may ask.
 
-``client_ip`` is the one place the client's address is decided, so the request log and the limiter
-always agree. X-Forwarded-For is a list any client can prepend to, so only the entries appended by
-the proxies we run (``RATELIMIT_TRUSTED_FORWARDED_HOPS``, counted from the right) are believed; with
-no trusted proxy it is ignored and the socket's address is used.
+``client_ip`` is the one place the client's address is decided, so the request log, the limiter and
+the scanner ban always agree. Behind a Cloudflare Tunnel every request reaches the pod from the
+connector, so with ``RATELIMIT_TRUST_CF_HEADER`` on, the visitor's address comes from
+``CF-Connecting-IP``, which Cloudflare's edge sets on every request and overwrites if the visitor sent
+one. Otherwise X-Forwarded-For, a list any client can prepend to, is believed only for the entries
+appended by the proxies we run (``RATELIMIT_TRUSTED_FORWARDED_HOPS``, counted from the right); with no
+trusted proxy it is ignored and the socket's address is used.
 """
 
 import ipaddress
@@ -33,7 +36,10 @@ def _valid_ip(value: str) -> bool:
 
 
 def client_ip(request: HttpRequest) -> str:
-    """Return the client's address, trusting only our own proxies' X-Forwarded-For entries.
+    """Return the client's address: Cloudflare's record of it when trusted, else our own proxies' entries.
+
+    Turn ``RATELIMIT_TRUST_CF_HEADER`` on only where every way to the site passes through Cloudflare or
+    strips the header (deploy/README.md), since a client that reaches the pod directly could set it.
 
     Args:
         request: The request.
@@ -42,6 +48,10 @@ def client_ip(request: HttpRequest) -> str:
         The address, or ``"?"`` when none is known.
 
     """
+    if getattr(settings, "RATELIMIT_TRUST_CF_HEADER", False):
+        edge: str = request.META.get("HTTP_CF_CONNECTING_IP", "").strip()
+        if edge and _valid_ip(edge):
+            return edge
     hops: int = getattr(settings, "RATELIMIT_TRUSTED_FORWARDED_HOPS", 0)
     if hops > 0:
         entries: list[str] = [
