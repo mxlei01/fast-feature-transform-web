@@ -1,0 +1,24 @@
+# The project both Applications deploy through, applied once with `kubectl apply -f` before them. It
+# allows only this repository, only the site's two namespaces, and only the kinds of objects the overlays
+# hold: no Secret, no RBAC and nothing cluster-wide, so a change merged here can do nothing else in the
+# cluster. ArgoCD reads this file only when it is applied by hand, so editing it in git widens nothing.
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: fare-web
+  namespace: argocd
+spec:
+  description: The taxi-fare site, from mxlei01/fast-feature-transform-web
+  sourceRepos:
+    - https://github.com/mxlei01/fast-feature-transform-web.git
+  destinations:
+    - { server: https://kubernetes.default.svc, namespace: fare-web }
+    - { server: https://kubernetes.default.svc, namespace: fare-web-staging }
+  clusterResourceWhitelist: []
+  namespaceResourceWhitelist:
+    - { group: "", kind: ConfigMap }
+    - { group: "", kind: Service }
+    - { group: apps, kind: Deployment }
+    - { group: batch, kind: Job }
+    - { group: networking.k8s.io, kind: NetworkPolicy }
+    - { group: traefik.io, kind: Middleware }

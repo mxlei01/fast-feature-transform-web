@@ -3,6 +3,8 @@
 # CF-Connecting-IP (RATELIMIT_TRUST_CF_HEADER), so any other pod that could reach it could choose its own
 # address. A LAN Ingress would need a rule here for traefik, and must strip that header
 # (strip-cf-headers.yaml).
+# The site opens no connections of its own, not even to DNS, so it has no egress rule: a compromised
+# process could reach neither the cluster nor the internet. Replies to the connections above still flow.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -11,7 +13,7 @@ metadata:
 spec:
   podSelector:
     matchLabels: { app: fare-web }
-  policyTypes: [Ingress]
+  policyTypes: [Ingress, Egress]
   ingress:
     - from:
         # The connector runs only in the prod namespace, and serves staging too.
