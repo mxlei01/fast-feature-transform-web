@@ -14,6 +14,8 @@ spec:
     metadata:
       labels: { app: fare-web }
     spec:
+      # The site never calls the Kubernetes API.
+      automountServiceAccountToken: false
       # The image is built on Apple silicon, so it runs only on arm64 nodes.
       affinity:
         nodeAffinity:

@@ -16,6 +16,8 @@ spec:
       labels: { app: fare-web-smoke }
     spec:
       restartPolicy: Never
+      # The smoke checks never call the Kubernetes API.
+      automountServiceAccountToken: false
       affinity:
         nodeAffinity:
           requiredDuringSchedulingIgnoredDuringExecution:

@@ -15,14 +15,15 @@ still missing.
 | `manifests/overlays/prod/` | Namespace `fare-web`, plus the tunnel connector |
 | `manifests/cloudflared/` | The Cloudflare Tunnel connector and its NetworkPolicy: two replicas, included by prod only, since one tunnel serves both hostnames |
 | `cloudflared/tunnel_routing.py` | The tunnel's routing, pushed to Cloudflare with `make tunnel-routing ARGS=--push` |
-| `argocd/` | The two ArgoCD Applications, applied once |
+| `argocd/` | The ArgoCD project and the two Applications, applied once |
 
 The pod runs one replica, because the rate limit is counted per process. It runs as a non-root
 user on a read-only root filesystem, with an `emptyDir` at `/tmp`. The site refuses file uploads before
 spooling them, so the `emptyDir` cannot be filled that way. Its probes send `Host: localhost` to
 `/healthz`, which is exempt from the HTTPS redirect. The startup probe allows three minutes for the
 first request, which loads torch and the model. On macOS the worker holds 247 MB once the model is
-loaded; the pod requests 512Mi and is limited to 1Gi.
+loaded; the pod requests 512Mi and is limited to 1Gi. The pod has no service-account token, and its
+NetworkPolicy allows it no outgoing connections, not even DNS: the site calls nothing.
 
 ## One-time setup
 
@@ -38,7 +39,11 @@ loaded; the pod requests 512Mi and is limited to 1Gi.
 
 2. Build, push and pin a first image (steps 2 and 3 below), and merge the pins to master. Until then,
    both overlays name the tag `dev`, which no build produces.
-3. `kubectl apply -f deploy/argocd/application-staging.yaml -f deploy/argocd/application-prod.yaml`.
+3. `kubectl apply -f deploy/argocd/project.yaml`, then
+   `kubectl apply -f deploy/argocd/application-staging.yaml -f deploy/argocd/application-prod.yaml`. The
+   project allows the Applications only this repository, the two namespaces and the kinds of objects the
+   overlays hold. A new kind in the overlays fails the sync until it is added to `project.yaml` and the
+   project is applied again by hand.
 4. Right after applying them, give the live Applications the registry (see "Before the first image"
    below). Until then their pods cannot pull the image.
 5. The tunnel. Copy its token from Cloudflare's dashboard (the `eyJ…` string in the tunnel's connector

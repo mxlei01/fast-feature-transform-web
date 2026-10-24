@@ -4,7 +4,7 @@
 # uv installs free-threaded CPython 3.14 and the locked dependencies (torch's CPU-only build on
 # Linux). The build cannot succeed yet: the vendored fast-inference wheel is macOS-only, and the image
 # needs the library's Linux wheel from PyPI first (deploy/README.md).
-FROM ghcr.io/astral-sh/uv:0.12.17-trixie-slim@sha256:1c97a153d9c2308c89ca4fb19766483db3256a86313806fed99b1c59a9767b6e
+FROM ghcr.io/astral-sh/uv:0.13.5-trixie-slim@sha256:95611d89b7324e0517fe7257bb00979cf1f68461e5fb2b2d027d039da054bc07
 
 # Python goes under /opt, where the non-root user can read it.
 ENV UV_LINK_MODE=copy \

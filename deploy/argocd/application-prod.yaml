@@ -6,7 +6,7 @@ metadata:
   name: fare-web
   namespace: argocd
 spec:
-  project: default
+  project: fare-web
   source:
     repoURL: https://github.com/mxlei01/fast-feature-transform-web.git
     targetRevision: master
@@ -14,7 +14,6 @@ spec:
   destination:
     server: https://kubernetes.default.svc
     namespace: fare-web
+  # The namespace is created by hand (deploy/README.md), so the project allows no cluster-wide objects.
   syncPolicy:
     automated: { prune: false, selfHeal: false }
-    syncOptions:
-      - CreateNamespace=true
