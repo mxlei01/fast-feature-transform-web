@@ -151,6 +151,11 @@ def test_the_api_prices_a_trip(client: Client) -> None:
             '{"pickup_zone": 161, "dropoff_zone": 236, "pickup_time": "2026-08-12T09:15", "trip_distance": Infinity}',
             "Infinity",
         ),
+        # REGRESSION: a number past Decimal's exponent limits, either way and anywhere in the body, is a 400. It
+        # used to escape json.loads as decimal.InvalidOperation and answer with a 500 and a logged traceback.
+        ('{"trip_distance": 1e1000000000000000000}', "out of range"),
+        ('{"trip_distance": -1e-1999999999999999998}', "out of range"),
+        ("1e1000000000000000000", "out of range"),
     ],
 )
 def test_the_api_refuses_json_that_is_not_exactly_a_trip(client: Client, body: str, message: str) -> None:

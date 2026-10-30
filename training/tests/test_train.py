@@ -23,6 +23,7 @@ from training.train import (
     open_memmap,
     predict,
     regression_metrics,
+    replace_directory,
     tensors,
     train_from_prepared,
 )
@@ -312,3 +313,109 @@ def test_an_interrupted_run_leaves_the_served_artifacts_alone(tmp_path: Path, mo
     with pytest.raises(KeyboardInterrupt):
         main([*arguments, "--seed", "7"])
     assert {path.name: path.read_bytes() for path in out.rglob("*") if path.is_file()} == before
+
+
+def _two_versions(served: Path, staging: Path) -> None:
+    for directory, version in ((served, "served"), (staging, "new")):
+        directory.mkdir()
+        (directory / "model.json").write_text(version)
+
+
+def _refuse_to_move(monkeypatch: pytest.MonkeyPatch, staging: Path, error: BaseException) -> None:
+    rename = Path.rename
+
+    def failing(self: Path, target: Path) -> Path:
+        if self == staging:
+            raise error
+        return rename(self, target)
+
+    monkeypatch.setattr(Path, "rename", failing)
+
+
+# REGRESSION: a swap stopped between its two renames puts the served directory back. It used to leave no
+# artifacts directory at all, and the next run then deleted artifacts.old, the only copy left.
+@pytest.mark.parametrize("error", [OSError("the swap failed"), KeyboardInterrupt()], ids=["error", "interrupt"])
+def test_a_swap_stopped_between_its_renames_puts_the_served_artifacts_back(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, error: BaseException
+) -> None:
+    out: Path = tmp_path / "artifacts"
+    staging: Path = tmp_path / "artifacts.staging"
+    _two_versions(out, staging)
+    _refuse_to_move(monkeypatch, staging, error)
+    with pytest.raises(type(error)):
+        replace_directory(staging, out)
+    assert (out / "model.json").read_text() == "served"
+    assert (staging / "model.json").read_text() == "new"
+
+
+def test_a_ctrl_c_during_the_first_rename_puts_the_served_artifacts_back(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    out: Path = tmp_path / "artifacts"
+    staging: Path = tmp_path / "artifacts.staging"
+    _two_versions(out, staging)
+    rename = Path.rename
+
+    def interrupted(self: Path, target: Path) -> Path:
+        moved: Path = rename(self, target)
+        if self == out:
+            raise KeyboardInterrupt  # the signal arrived during the rename; Python raises once it returns
+        return moved
+
+    monkeypatch.setattr(Path, "rename", interrupted)
+    with pytest.raises(KeyboardInterrupt):
+        replace_directory(staging, out)
+    assert (out / "model.json").read_text() == "served"
+    assert (staging / "model.json").read_text() == "new"
+
+
+# REGRESSION: a swap that finds only artifacts.old, left by one killed between its renames, keeps it until the new
+# directory is in place. It used to delete it first, so a second failure lost the last served copy.
+def test_a_swap_keeps_a_killed_swaps_old_directory_until_the_new_one_is_in_place(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    out: Path = tmp_path / "artifacts"
+    retired: Path = tmp_path / "artifacts.old"
+    staging: Path = tmp_path / "artifacts.staging"
+    _two_versions(retired, staging)
+    with monkeypatch.context() as patch:
+        _refuse_to_move(patch, staging, OSError("the swap failed"))
+        with pytest.raises(OSError, match="the swap failed"):
+            replace_directory(staging, out)
+    assert (out / "model.json").read_text() == "served"
+    replace_directory(staging, out)
+    assert (out / "model.json").read_text() == "new"
+    assert not retired.exists()
+    assert not staging.exists()
+
+
+def test_a_failed_first_swap_raises_its_own_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    out: Path = tmp_path / "artifacts"
+    staging: Path = tmp_path / "artifacts.staging"
+    staging.mkdir()
+    (staging / "model.json").write_text("new")
+    _refuse_to_move(monkeypatch, staging, OSError("the swap failed"))
+    with pytest.raises(OSError, match="the swap failed"):
+        replace_directory(staging, out)
+    assert not out.exists()
+    assert (staging / "model.json").read_text() == "new"
+
+
+def test_a_ctrl_c_after_the_second_rename_keeps_the_new_artifacts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    out: Path = tmp_path / "artifacts"
+    staging: Path = tmp_path / "artifacts.staging"
+    _two_versions(out, staging)
+    rename = Path.rename
+
+    def interrupted(self: Path, target: Path) -> Path:
+        moved: Path = rename(self, target)
+        if self == staging:
+            raise KeyboardInterrupt  # the signal arrived during the rename; Python raises once it returns
+        return moved
+
+    monkeypatch.setattr(Path, "rename", interrupted)
+    with pytest.raises(KeyboardInterrupt):
+        replace_directory(staging, out)
+    assert (out / "model.json").read_text() == "new"

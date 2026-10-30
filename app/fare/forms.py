@@ -13,7 +13,7 @@ distance. ``NaN`` and ``Infinity``, which Python's ``json`` would otherwise acce
 
 import json
 from datetime import datetime
-from decimal import Decimal
+from decimal import Decimal, DecimalException
 from typing import Any
 
 from django import forms
@@ -157,6 +157,11 @@ def trip_from_json(body: bytes) -> dict[str, str]:
         payload: Any = json.loads(body, parse_constant=_refuse_constant, parse_float=Decimal)
     except (UnicodeDecodeError, json.JSONDecodeError) as error:
         raise JSONTripError("the body is not valid JSON") from error
+    except DecimalException as error:
+        # Decimal refuses a number past its exponent limits, decimal.MAX_EMAX
+        # (10**18 - 1) and decimal.MIN_ETINY (-1999999999999999997), with
+        # InvalidOperation, which json.loads lets through.
+        raise JSONTripError("a number in the body is out of range") from error
     if not isinstance(payload, dict):
         raise JSONTripError("expected a JSON object")
     if set(payload) != FIELDS:
