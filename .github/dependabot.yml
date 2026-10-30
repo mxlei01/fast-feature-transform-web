@@ -1,6 +1,9 @@
 # Dependabot proposes updates to the actions the workflows pin, in one pull
-# request a week. Each update waits until its release is three days old, so a
-# compromised release has time to be found and pulled first.
+# request a week, and to the Dockerfile's base image, whose versioned tags are
+# never rebuilt for Debian's fixes. An action's update waits until its release
+# is three days old, so a compromised release has time to be found and pulled
+# first. ghcr.io gives Dependabot no publication date, so base-image updates
+# arrive without that wait.
 version: 2
 updates:
 - package-ecosystem: github-actions
@@ -12,3 +15,9 @@ updates:
   groups:
     actions:
       patterns: ["*"]
+- package-ecosystem: docker
+  directory: /
+  schedule:
+    interval: weekly
+  cooldown:
+    default-days: 3
