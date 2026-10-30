@@ -2,9 +2,10 @@
 # root:
 #   docker build -t fare-web .
 # uv installs free-threaded CPython 3.14 and the locked dependencies (torch's CPU-only build on
-# Linux). The build cannot succeed yet: the vendored fast-inference wheel is macOS-only, and the image
+# Linux); the uv in this base image decides which 3.14 patch release that is, 3.14.10 for uv 0.13.6.
+# The build cannot succeed yet: the vendored fast-inference wheel is macOS-only, and the image
 # needs the library's Linux wheel from PyPI first (deploy/README.md).
-FROM ghcr.io/astral-sh/uv:0.13.5-trixie-slim@sha256:95611d89b7324e0517fe7257bb00979cf1f68461e5fb2b2d027d039da054bc07
+FROM ghcr.io/astral-sh/uv:0.13.6-trixie-slim@sha256:caa9f629fcb575ba2ed6ee160ec51e82e8444f6bdc3fc05c855b2636a5511eb8
 
 # Python goes under /opt, where the non-root user can read it.
 ENV UV_LINK_MODE=copy \

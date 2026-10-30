@@ -30,7 +30,10 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e  # v10.3.2
         with:
-          version: "0.13.5"
+          version: "0.13.6"
+          # setup-uv v10.3.2 knows checksums up to uv 0.13.5; this is 0.13.6's
+          # uv-x86_64-unknown-linux-gnu.tar.gz, as uv's release lists it.
+          checksum: "f29c3e94ffabd7e6f3ba521dba169a9b7ec12100bf3257087f0f24f6123f3645"
           # The job fetches two pinned tools, which a cache would barely speed up, and a cache is one more
           # thing a run passes to later runs.
           enable-cache: false

@@ -342,7 +342,10 @@ def replace_directory(finished: Path, target: Path) -> None:
     """Put a finished artifacts directory where the old one was.
 
     A server reads the directory when it starts, so it must never meet a new pipeline beside an
-    old network: training writes everything elsewhere first and only then swaps it in.
+    old network: training writes everything elsewhere first and only then swaps it in. A swap
+    stopped between its two renames, by an error or Ctrl-C, puts the old directory back; one
+    killed there leaves only the old directory, under its .old name, which the next swap keeps
+    until the new directory is in place.
 
     Args:
         finished: The complete new directory.
@@ -350,10 +353,15 @@ def replace_directory(finished: Path, target: Path) -> None:
 
     """
     retired: Path = target.with_name(target.name + ".old")
-    shutil.rmtree(retired, ignore_errors=True)
-    if target.exists():
-        target.rename(retired)
-    finished.rename(target)
+    try:
+        if target.exists():
+            shutil.rmtree(retired, ignore_errors=True)
+            target.rename(retired)
+        finished.rename(target)
+    except BaseException:
+        if retired.exists() and not target.exists():
+            retired.rename(target)
+        raise
     shutil.rmtree(retired, ignore_errors=True)
 
 
